@@ -38,6 +38,8 @@ type Registers struct {
 	DoubleStrike       bool
 	DoubleWidth        bool
 	DoubleHeight       bool
+	WidthMultiplier    int // GS ! horizontal scale (1..8)
+	HeightMultiplier   int // GS ! vertical scale (1..8)
 	Underline          int // 0 = off, 1 = 1-dot, 2 = 2-dot
 	DeleteLine         bool
 	UpsideDown         bool
@@ -96,6 +98,11 @@ type Registers struct {
 	UserCharsEnabled bool                      // ESC %
 	DownloadedImage  *DownloadedBitImage       // Defined via GS *
 	NVBitmaps        map[int]*NVBitImage       // Defined via FS q
+
+	// Goojprt QR203 Bluetooth / UART Configuration (ESC 0 n1 n2 n3 d1..dk)
+	BluetoothBaudIndex uint8
+	BluetoothName      string
+	BluetoothPassword  string
 }
 
 // NewRegisters initializes a Registers struct with hardware defaults for the profile.
@@ -127,6 +134,8 @@ func (r *Registers) Reset(prof Profile) {
 	r.DoubleStrike = false
 	r.DoubleWidth = false
 	r.DoubleHeight = false
+	r.WidthMultiplier = 1
+	r.HeightMultiplier = 1
 	r.Underline = 0
 	r.DeleteLine = false
 	r.UpsideDown = false

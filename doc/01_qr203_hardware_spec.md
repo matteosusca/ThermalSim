@@ -6,12 +6,16 @@ The **QR203** (manufactured under various OEM brandings including Cashino CSN-A2
 - **Printing Method:** Direct thermal line printing
 - **Resolution:** 203.2 DPI ($8\text{ dots/mm}$)
 - **Total Print Width:** $48\text{ mm} = 384\text{ dots} = 48\text{ bytes per line}$
-- **Paper Roll Width:** $57.5 \pm 0.5\text{ mm}$, maximum roll diameter $39\text{–}40\text{ mm}$
-- **Printing Speed:** $60\text{ mm/s}$ nominal (up to $80\text{–}90\text{ mm/s}$ at $8.5\text{V}$)
+- **Paper Roll Width:** $57.5 \pm 0.5\text{ mm}$, maximum roll diameter $39\text{–}40\text{ mm}$ ($55\text{ mm}$ on open-frame bracket)
+- **Chassis Dimensions (Goojprt QR203):** $76.8 \times 77.4 \times 47.65\text{ mm}$ (panel cutout $72.8 \times 73.25\text{ mm}$, depth $34.55\text{ mm}$)
+- **Printing Speed:** $50\text{–}60\text{ mm/s}$ nominal (up to $80\text{–}90\text{ mm/s}$ at $8.5\text{V–}9\text{V}$)
 - **Head Lifetime:** $\approx 50\text{ km}$ thermal element travel
-- **Input Supply Voltage:** $5\text{V to }9\text{V}$ (or $12\text{V}$ on specific variant boards)
-- **Serial Interface:** RS-232C or TTL level UART (`8N1`, 8 data bits, no parity, 1 stop bit)
-- **Factory Default Baud Rate:** $19200\text{ bps}$ (or $9600\text{ bps}$ on some factory runs)
+- **Input Supply Voltage:** $5\text{V to }9\text{V}$ ($2\text{A}$ peak) or $12\text{V}$ on industrial variants
+- **Serial Interface:** RS-232C ($\pm 12\text{V}$) or TTL level UART ($0\text{–}3.3\text{V}/5\text{V}$, `8N1`) and Mini-B USB
+- **Factory Default Baud Rate:** **$9600\text{ bps}$** on Goojprt QR203 (configurable via `ESC 0 n1 n2 n3 d1..dk`: `0`=9600, `1`=19200, `2`=38400, `3`=57600, `4`=115200 bps)
+- **Default Heating Parameters (`ESC 7`):**
+  - Goojprt 203 (v2.69): `n1=9` ($80\text{ dots}$), `n2=80` ($800\text{ }\mu\text{s}$), `n3=2` ($20\text{ }\mu\text{s}$)
+  - Legacy (v2.16): `n1=7` ($64\text{ dots}$), `n2=80` ($800\text{ }\mu\text{s}$), `n3=2` ($20\text{ }\mu\text{s}$)
 - **Internal SRAM Receive Buffer:**
   - Standard (Firmware v2.64–v2.69): **4096 bytes**
   - Legacy/Clone: **256 bytes** (reproduces unthrottled bitmap buffer overflow bugs)
@@ -25,13 +29,15 @@ The **QR203** (manufactured under various OEM brandings including Cashino CSN-A2
 ---
 
 ## 2. Electrical Pinouts & Control Lines
-Standard 6-pin serial connector:
-1. `GND`: Ground
-2. `NC`: No Connection
-3. `VH`: Power Supply ($5\text{V–}9\text{V}$)
-4. `GND`: Ground
-5. `RXD`: Serial Receive Data (Input from host MCU/PC)
-6. `TXD`: Serial Transmit Data (Output to host MCU/PC for status responses)
+**Goojprt QR203 (`203 User Manual` / EPM203-MRS board connectors):**
+- **J3 (TTL 5-pin Molex 53047) & J4 (RS232 5-pin Molex 53047):**
+  1. `GND`: Ground
+  2. `TXD`: Transmit data (Printer output $\rightarrow$ Host RX)
+  3. `RXD`: Receive data (Printer input $\leftarrow$ Host TX)
+  4. `CTS/DSR`: Flow control input
+  5. `RTS/DTR`: Flow control output
+- **J5 (Power Connector):** `GND` and `VH` ($5\text{V–}9\text{V}$ DC)
+- **USB Connector (Mini-B 5-pin):** `1: VBUS`, `2: D-`, `3: D+`, `4: ID`, `5: GND`
 
 ---
 

@@ -26,6 +26,11 @@ const (
 	StateUDGData
 	StateGSStarHeader
 	StateGSStarData
+	StateESCStarHeader
+	StateESCStarData
+	StateESC0Data
+	StateFSqHeader
+	StateFSqData
 	StateKanji2nd
 )
 
@@ -63,7 +68,7 @@ func (lb *LineBuffer) Reset() {
 	lb.cursorX = 0
 	lb.cursorCol = 0
 	lb.hasContent = false
-	lb.matrix = make([][]uint8, 48) // Pre-allocate up to 48 dots high
+	lb.matrix = make([][]uint8, 192) // Pre-allocate up to 192 dots high (24 * 8x)
 	for r := range lb.matrix {
 		lb.matrix[r] = make([]uint8, lb.dotsPerLine)
 	}
@@ -112,6 +117,24 @@ type FSM struct {
 	gsStarX, gsStarY int
 	gsStarNeed       int
 	gsStarBuf        []byte
+
+	// ESC * temporary state
+	escStarM    byte
+	escStarCols int
+	escStarNeed int
+	escStarBuf  []byte
+
+	// ESC 0 (Goojprt Bluetooth/UART config) temporary state
+	esc0NameLen int
+	esc0PassLen int
+	esc0Buf     []byte
+
+	// FS q (NV bitmap) temporary state
+	fsqCount   int
+	fsqCurrent int
+	fsqX, fsqY int
+	fsqNeed    int
+	fsqBuf     []byte
 
 	// Bidirectional Serial TX output buffer
 	txOut chan byte
@@ -253,6 +276,21 @@ func (f *FSM) Step(b byte) {
 		}
 		f.emit(b, "GS * Image Data")
 
+	case StateESCStarHeader:
+		f.handleESCStarHeader(b)
+
+	case StateESCStarData:
+		f.handleESCStarData(b)
+
+	case StateESC0Data:
+		f.handleESC0Data(b)
+
+	case StateFSqHeader:
+		f.handleFSqHeader(b)
+
+	case StateFSqData:
+		f.handleFSqData(b)
+
 	case StateKanji2nd:
 		// Render multi-byte Kanji character
 		c1 := f.paramCmd
@@ -337,18 +375,24 @@ func (f *FSM) handleESC(b byte) {
 		f.state = StateNormal
 		f.emit(b, "ESC @ (Initialize)")
 
-	case '!', 'M', '3', 'a', 'J', 'd', 'E', 'G', '-', '{', 'V', 'R', 't', ' ', 'B', '=', 'c', '%', '?':
+	case '!', 'M', '3', '9', 'a', 'J', 'd', 'E', 'G', '-', '{', 'V', 'R', 't', ' ', 'B', '=', '%', '?', 'u':
 		// 1-parameter commands
 		f.paramNeed = 1
 		f.paramBuf = f.paramBuf[:0]
 		f.state = StateParam
 		f.emit(b, "ESC Cmd (1 param needed)")
 
-	case '7': // Setting Control Parameter (ESC 7 n1 n2 n3)
+	case 'c': // ESC c 5 n (2 parameters: '5' and n)
+		f.paramNeed = 2
+		f.paramBuf = f.paramBuf[:0]
+		f.state = StateParam
+		f.emit(b, "ESC c (2 params needed: '5', n)")
+
+	case '7', 'p', '0': // 3-parameter commands: ESC 7 n1 n2 n3, ESC p m t1 t2, ESC 0 n1 n2 n3
 		f.paramNeed = 3
 		f.paramBuf = f.paramBuf[:0]
 		f.state = StateParam
-		f.emit(b, "ESC 7 (3 params needed)")
+		f.emit(b, "ESC Cmd (3 params needed)")
 
 	case '8': // Sleep parameter (ESC 8 n1 [n2])
 		if f.profile.FirmwareVersion() == FirmwareV216 {
@@ -387,9 +431,8 @@ func (f *FSM) handleESC(b byte) {
 		f.emit(b, "ESC D (Tab stops)")
 
 	case '*': // Select bit-image mode (ESC * m nL nH d...)
-		f.paramNeed = 3
 		f.paramBuf = f.paramBuf[:0]
-		f.state = StateParam
+		f.state = StateESCStarHeader
 		f.emit(b, "ESC * (Bit image header)")
 
 	case '&': // Define user-defined characters (ESC & y c1 c2...)
@@ -514,6 +557,18 @@ func (f *FSM) handleFS(b byte) {
 		f.state = StateParam
 		f.emit(b, "FS ! (Kanji mode param)")
 
+	case 'p': // Print NV bit image (FS p n m)
+		f.paramNeed = 2
+		f.paramBuf = f.paramBuf[:0]
+		f.state = StateParam
+		f.emit(b, "FS p (Print NV bit image)")
+
+	case 'q': // Define NV bit image (FS q n [xL xH yL yH d1..dk]...)
+		f.paramNeed = 1
+		f.paramBuf = f.paramBuf[:0]
+		f.state = StateParam
+		f.emit(b, "FS q (Define NV bit image)")
+
 	default:
 		f.state = StateNormal
 		f.emit(b, "UNKNOWN FS Cmd")
@@ -597,8 +652,12 @@ func (f *FSM) executeEscParam(cmd byte, p []byte) {
 		f.reg.LeftBlankChars = int(p[0])
 	case '=': // ESC = n: Online/Offline
 		f.reg.Online = (p[0] & 1) != 0
-	case 'c': // ESC c 5 n: Panel key enable
-		f.reg.PanelKeyEnabled = (p[0] & 1) == 0
+	case 'c': // ESC c 5 n: Panel key enable (p[0] == '5', p[1] == n)
+		if len(p) >= 2 && p[0] == '5' {
+			f.reg.PanelKeyEnabled = (p[1] & 1) == 0
+		} else if len(p) == 1 {
+			f.reg.PanelKeyEnabled = (p[0] & 1) == 0
+		}
 	case '%': // ESC % n: User chars enable
 		f.reg.UserCharsEnabled = (p[0] & 1) != 0
 	case '?': // ESC ? n: Cancel UDG char
@@ -613,8 +672,27 @@ func (f *FSM) executeEscParam(cmd byte, p []byte) {
 		} else {
 			f.reg.SleepTimeoutSec = int(p[0])
 		}
+	case '9': // ESC 9 n: Select Chinese code format (0:GBK, 1:UTF-8, 3:BIG5)
+		f.reg.ChineseFormat = int(p[0])
+	case '0': // ESC 0 n1 n2 n3 d1..dk: Goojprt Bluetooth baudrate, name, password
+		f.reg.BluetoothBaudIndex = p[0]
+		f.esc0NameLen = int(p[1])
+		f.esc0PassLen = int(p[2])
+		total := f.esc0NameLen + f.esc0PassLen
+		if total > 0 {
+			f.esc0Buf = make([]byte, 0, total)
+			f.state = StateESC0Data
+		}
+	case 'p': // ESC p m t1 t2: Generate drawer kick-out pulse
+		// No physical drawer attached; command accepted cleanly
+	case 'u': // ESC u n: Transmit peripheral device status (drawer)
+		f.sendTx(0x00)
 	case '$': // ESC $ nL nH
-		f.reg.AbsoluteX = int(p[0]) + int(p[1])*256
+		pos := int(p[0]) + int(p[1])*256
+		if pos < 384 {
+			f.reg.AbsoluteX = pos
+			f.lineBuf.cursorX = pos
+		}
 	case 'v': // ESC v n: Status command
 		f.transmitStatusESCv()
 	}
@@ -622,9 +700,11 @@ func (f *FSM) executeEscParam(cmd byte, p []byte) {
 
 func (f *FSM) executeGsParam(cmd byte, p []byte) {
 	switch cmd {
-	case '!': // GS ! n
+	case '!': // GS ! n (1..8x horizontal and vertical character size)
 		heightMult := int(p[0]&0x07) + 1
 		widthMult := int((p[0]>>4)&0x07) + 1
+		f.reg.HeightMultiplier = heightMult
+		f.reg.WidthMultiplier = widthMult
 		f.reg.DoubleHeight = heightMult > 1
 		f.reg.DoubleWidth = widthMult > 1
 	case 'B': // GS B n: Inverse
@@ -685,6 +765,16 @@ func (f *FSM) executeFsParam(cmd byte, p []byte) {
 		f.reg.KanjiDoubleW = (p[0] & 0x04) != 0
 		f.reg.KanjiDoubleH = (p[0] & 0x08) != 0
 		f.reg.KanjiUnderline = (p[0] & 0x80) != 0
+	case 'p': // FS p n m: Print NV bit image
+		f.printNVBitmap(int(p[0]), p[1])
+	case 'q': // FS q n: Define n NV bit images
+		f.fsqCount = int(p[0])
+		if f.fsqCount > 0 && f.lineBuf.cursorCol == 0 {
+			f.reg.NVBitmaps = make(map[int]*NVBitImage)
+			f.fsqCurrent = 1
+			f.paramBuf = f.paramBuf[:0]
+			f.state = StateFSqHeader
+		}
 	}
 }
 
@@ -713,16 +803,36 @@ func (f *FSM) applyEscExclamation(n byte) {
 		f.reg.Font = FontA
 	}
 
-	// v2.16 firmware used Bit 1 for Inverse
-	if f.profile.FirmwareVersion() == FirmwareV216 {
-		f.reg.Inverse = (n & 0x02) != 0
-	}
-
+	// Bit 1 (0x02): White/black reverse printing mode (203 User Manual p.13)
+	f.reg.Inverse = (n & 0x02) != 0
+	// Bit 2 (0x04): Upside-down printing mode
 	f.reg.UpsideDown = (n & 0x04) != 0
+	// Bit 3 (0x08): Emphasized mode
 	f.reg.Bold = (n & 0x08) != 0
+	// Bit 4 (0x10): Double-height mode
 	f.reg.DoubleHeight = (n & 0x10) != 0
+	if f.reg.DoubleHeight {
+		f.reg.HeightMultiplier = 2
+	} else {
+		f.reg.HeightMultiplier = 1
+	}
+	// Bit 5 (0x20): Double-width mode
 	f.reg.DoubleWidth = (n & 0x20) != 0
+	if f.reg.DoubleWidth {
+		f.reg.WidthMultiplier = 2
+	} else {
+		f.reg.WidthMultiplier = 1
+	}
+	// Bit 6 (0x40): Deleteline mode
 	f.reg.DeleteLine = (n & 0x40) != 0
+	// Bit 7 (0x80): Underline mode (203 User Manual p.8 & p.21)
+	if (n & 0x80) != 0 {
+		if f.reg.Underline == 0 {
+			f.reg.Underline = 1
+		}
+	} else {
+		f.reg.Underline = 0
+	}
 }
 
 func (f *FSM) handleHT() {
@@ -956,6 +1066,180 @@ func (f *FSM) printDownloadedImage(m byte) {
 	}
 }
 
+func (f *FSM) handleESCStarHeader(b byte) {
+	f.paramBuf = append(f.paramBuf, b)
+	if len(f.paramBuf) == 1 {
+		m := f.paramBuf[0]
+		valid := m == 0 || m == 1 || m == 32 || m == 33 || (f.profile.FirmwareVersion() == FirmwareV216 && m == 31)
+		// HARDWARE QUIRK (203 User Manual p.18):
+		// "If the value of m is out of the specified range, nL and nH and the data following are processed as normal data."
+		if !valid {
+			f.state = StateNormal
+			f.emit(b, "ESC * Invalid mode m (Quirk: following bytes processed as normal data)")
+			return
+		}
+		f.escStarM = m
+		f.emit(b, "ESC * Mode m")
+		return
+	}
+	if len(f.paramBuf) == 3 {
+		nL := int(f.paramBuf[1])
+		nH := int(f.paramBuf[2])
+		f.escStarCols = nL + nH*256
+		bytesPerCol := 1
+		if f.escStarM >= 31 {
+			bytesPerCol = 3
+		}
+		f.escStarNeed = f.escStarCols * bytesPerCol
+		if f.escStarNeed <= 0 {
+			f.state = StateNormal
+			return
+		}
+		f.escStarBuf = make([]byte, 0, f.escStarNeed)
+		f.state = StateESCStarData
+		f.emit(b, "ESC * Stream Start")
+	}
+}
+
+func (f *FSM) handleESCStarData(b byte) {
+	f.escStarBuf = append(f.escStarBuf, b)
+	if len(f.escStarBuf) < f.escStarNeed {
+		f.emit(b, "ESC * Data Byte")
+		return
+	}
+
+	// Render column-major bit image into line buffer (Figure 3.11.3, 203 User Manual p.19-20)
+	is24Dot := f.escStarM >= 31
+	singleDensity := (f.escStarM == 0 || f.escStarM == 32 || f.escStarM == 31)
+	horizStep := 1
+	if singleDensity {
+		horizStep = 2
+	}
+	bytesPerCol := 1
+	if is24Dot {
+		bytesPerCol = 3
+	}
+	if 24 > f.lineBuf.height {
+		f.lineBuf.height = 24
+	}
+	startX := f.lineBuf.cursorX + f.reg.LeftMargin + f.reg.LeftBlankChars*12
+
+	for col := 0; col < f.escStarCols; col++ {
+		if is24Dot {
+			for byteIdx := 0; byteIdx < 3; byteIdx++ {
+				val := f.escStarBuf[col*bytesPerCol+byteIdx]
+				for bit := 0; bit < 8; bit++ {
+					if (val & (1 << (7 - bit))) != 0 {
+						y := byteIdx*8 + bit
+						for dx := 0; dx < horizStep; dx++ {
+							px := startX + col*horizStep + dx
+							if px < 384 && y < len(f.lineBuf.matrix) {
+								f.lineBuf.matrix[y][px] = 1
+								f.lineBuf.hasContent = true
+							}
+						}
+					}
+				}
+			}
+		} else {
+			// 8-dot vertical (each vertical bit stretches 3x vertically to fill 24-dot line)
+			val := f.escStarBuf[col]
+			for bit := 0; bit < 8; bit++ {
+				if (val & (1 << (7 - bit))) != 0 {
+					for dy := 0; dy < 3; dy++ {
+						y := bit*3 + dy
+						for dx := 0; dx < horizStep; dx++ {
+							px := startX + col*horizStep + dx
+							if px < 384 && y < len(f.lineBuf.matrix) {
+								f.lineBuf.matrix[y][px] = 1
+								f.lineBuf.hasContent = true
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	f.lineBuf.cursorX += f.escStarCols * horizStep
+	if f.lineBuf.cursorX > 384 {
+		f.lineBuf.cursorX = 384
+	}
+	f.state = StateNormal
+	f.emit(b, "ESC * Bit Image Complete")
+}
+
+func (f *FSM) handleESC0Data(b byte) {
+	f.esc0Buf = append(f.esc0Buf, b)
+	total := f.esc0NameLen + f.esc0PassLen
+	if len(f.esc0Buf) >= total {
+		f.reg.BluetoothName = string(f.esc0Buf[:f.esc0NameLen])
+		f.reg.BluetoothPassword = string(f.esc0Buf[f.esc0NameLen:total])
+		f.state = StateNormal
+		f.emit(b, "ESC 0 Bluetooth Config Complete")
+	} else {
+		f.emit(b, "ESC 0 Payload Byte")
+	}
+}
+
+func (f *FSM) handleFSqHeader(b byte) {
+	f.paramBuf = append(f.paramBuf, b)
+	if len(f.paramBuf) == 4 {
+		f.fsqX = int(f.paramBuf[0]) + int(f.paramBuf[1])*256
+		f.fsqY = int(f.paramBuf[2]) + int(f.paramBuf[3])*256
+		f.fsqNeed = f.fsqX * f.fsqY * 8
+		if f.fsqNeed <= 0 || f.fsqX > 1023 || f.fsqY > 288 {
+			f.state = StateNormal
+			return
+		}
+		f.fsqBuf = make([]byte, 0, f.fsqNeed)
+		f.state = StateFSqData
+	}
+}
+
+func (f *FSM) handleFSqData(b byte) {
+	f.fsqBuf = append(f.fsqBuf, b)
+	if len(f.fsqBuf) >= f.fsqNeed {
+		f.reg.NVBitmaps[f.fsqCurrent] = &NVBitImage{
+			WidthDots:  f.fsqX * 8,
+			HeightDots: f.fsqY * 8,
+			Data:       f.fsqBuf,
+		}
+		if f.fsqCurrent < f.fsqCount {
+			f.fsqCurrent++
+			f.paramBuf = f.paramBuf[:0]
+			f.state = StateFSqHeader
+		} else {
+			f.state = StateNormal
+		}
+	}
+}
+
+func (f *FSM) printNVBitmap(n int, m byte) {
+	// Effective only when there is no data in the print buffer (203 User Manual p.35)
+	if f.lineBuf.hasContent {
+		return
+	}
+	img, ok := f.reg.NVBitmaps[n]
+	if !ok || img == nil {
+		return
+	}
+	// Column-major format (x*8 columns, y bytes per column, MSB top)
+	cols := img.WidthDots
+	bytesPerCol := img.HeightDots / 8
+	for r := 0; r < img.HeightDots; r++ {
+		rowDots := make([]uint8, 384)
+		byteRow := r / 8
+		bit := 7 - (r % 8)
+		for c := 0; c < cols && c < 384; c++ {
+			bVal := img.Data[c*bytesPerCol+byteRow]
+			if (bVal & (1 << bit)) != 0 {
+				rowDots[c] = 1
+			}
+		}
+		f.head.BurnRow(rowDots, f.reg)
+	}
+}
+
 // --------------------------------------------------------------------------
 // Status Queries & Bidirectional Feedback
 // --------------------------------------------------------------------------
@@ -1054,21 +1338,37 @@ func (f *FSM) renderPrintableChar(b byte) {
 		glyph = f.profile.RenderChar(b, f.reg.Font, f.reg.CodePage, f.reg.IntlCharset)
 	}
 
-	// Apply Double Width / Double Height multipliers
-	isDoubleW := f.reg.DoubleWidth || f.reg.SingleLineDoubleW
-	isDoubleH := f.reg.DoubleHeight
+	// Apply 90-degree clockwise rotation if enabled (ESC V 1, 203 User Manual p.28)
+	if f.reg.Rotate90 {
+		rot := make([]uint8, charWidth*charHeight)
+		for y := 0; y < charHeight; y++ {
+			for x := 0; x < charWidth; x++ {
+				// (x, y) in srcW x srcH -> (charHeight - 1 - y, x) in newW(charHeight) x newH(charWidth)
+				rot[x*charHeight+(charHeight-1-y)] = glyph[y*charWidth+x]
+			}
+		}
+		glyph = rot
+		charWidth, charHeight = charHeight, charWidth
+	}
 
-	renderW := charWidth
-	if isDoubleW {
-		renderW *= 2
+	// Apply Width / Height multipliers (ESC !, ESC SO, GS !)
+	wMult := f.reg.WidthMultiplier
+	if wMult < 1 {
+		wMult = 1
 	}
-	renderH := charHeight
-	if isDoubleH {
-		renderH *= 2
+	if f.reg.SingleLineDoubleW && wMult < 2 {
+		wMult = 2
 	}
+	hMult := f.reg.HeightMultiplier
+	if hMult < 1 {
+		hMult = 1
+	}
+
+	renderW := charWidth * wMult
+	leftBase := f.reg.LeftMargin + f.reg.LeftBlankChars*12
 
 	// Line buffer wrap check
-	if f.lineBuf.cursorX+renderW > 384 {
+	if leftBase+f.lineBuf.cursorX+renderW > 384 {
 		printed := f.flushLineBuffer()
 		if extra := f.reg.LineSpacing - printed; extra > 0 {
 			f.head.FeedRows(extra, f.reg)
@@ -1080,33 +1380,33 @@ func (f *FSM) renderPrintableChar(b byte) {
 }
 
 func (f *FSM) renderGlyphIntoLine(glyph []uint8, srcW, srcH int) {
-	isDoubleW := f.reg.DoubleWidth || f.reg.SingleLineDoubleW
-	isDoubleH := f.reg.DoubleHeight
-
-	destW := srcW
-	if isDoubleW {
-		destW *= 2
+	wMult := f.reg.WidthMultiplier
+	if wMult < 1 {
+		wMult = 1
 	}
-	destH := srcH
-	if isDoubleH {
-		destH *= 2
+	if f.reg.SingleLineDoubleW && wMult < 2 {
+		wMult = 2
+	}
+	hMult := f.reg.HeightMultiplier
+	if hMult < 1 {
+		hMult = 1
+	}
+
+	destW := srcW * wMult
+	destH := srcH * hMult
+	if destH > len(f.lineBuf.matrix) {
+		destH = len(f.lineBuf.matrix)
 	}
 
 	if destH > f.lineBuf.height {
 		f.lineBuf.height = destH
 	}
 
-	startX := f.lineBuf.cursorX + f.reg.LeftMargin
+	startX := f.lineBuf.cursorX + f.reg.LeftMargin + f.reg.LeftBlankChars*12
 	for dy := 0; dy < destH; dy++ {
-		sy := dy
-		if isDoubleH {
-			sy = dy / 2
-		}
+		sy := dy / hMult
 		for dx := 0; dx < destW; dx++ {
-			sx := dx
-			if isDoubleW {
-				sx = dx / 2
-			}
+			sx := dx / wMult
 			var dot uint8
 			if sy < srcH && sx < srcW {
 				dot = glyph[sy*srcW+sx]
@@ -1119,8 +1419,8 @@ func (f *FSM) renderGlyphIntoLine(glyph []uint8, srcW, srcH int) {
 				}
 			}
 
-			// Apply underline (rows 22-23 for Font A)
-			if f.reg.Underline > 0 && dy >= destH-f.reg.Underline {
+			// Apply underline (disabled on 90-deg rotated or white/black inverted per 203 User Manual p.21 & p.45)
+			if f.reg.Underline > 0 && !f.reg.Rotate90 && !f.reg.Inverse && dy >= destH-f.reg.Underline {
 				dot = 1
 			}
 
@@ -1148,7 +1448,7 @@ func (f *FSM) renderGlyphIntoLine(glyph []uint8, srcW, srcH int) {
 		}
 	}
 
-	f.lineBuf.cursorX += destW + f.reg.RightSideSpacing
+	f.lineBuf.cursorX += destW + f.reg.RightSideSpacing*wMult
 }
 
 func (f *FSM) flushLineBuffer() int {
@@ -1158,10 +1458,11 @@ func (f *FSM) flushLineBuffer() int {
 	}
 
 	printedHeight := f.lineBuf.height
+	leftBase := f.reg.LeftMargin + f.reg.LeftBlankChars*12
 
 	// Compute horizontal shift for Center (Justify=1) or Right (Justify=2) alignment
 	shift := 0
-	availWidth := 384 - f.reg.LeftMargin
+	availWidth := 384 - leftBase
 	if f.lineBuf.cursorX > 0 && f.lineBuf.cursorX < availWidth {
 		switch f.reg.Justify {
 		case 1: // Center
@@ -1173,15 +1474,26 @@ func (f *FSM) flushLineBuffer() int {
 
 	// Burn each active row of the line buffer to the thermal head
 	for r := 0; r < printedHeight; r++ {
-		row := f.lineBuf.matrix[r]
+		srcRowIdx := r
+		if f.reg.UpsideDown {
+			srcRowIdx = printedHeight - 1 - r
+		}
+		row := f.lineBuf.matrix[srcRowIdx]
 		if shift > 0 {
 			shifted := make([]uint8, 384)
-			for x := f.reg.LeftMargin; x < f.reg.LeftMargin+f.lineBuf.cursorX && x < 384; x++ {
+			for x := leftBase; x < leftBase+f.lineBuf.cursorX && x < 384; x++ {
 				if x+shift < 384 {
 					shifted[x+shift] = row[x]
 				}
 			}
 			row = shifted
+		}
+		if f.reg.UpsideDown {
+			flipped := make([]uint8, 384)
+			for x := 0; x < 384; x++ {
+				flipped[383-x] = row[x]
+			}
+			row = flipped
 		}
 		f.head.BurnRow(row, f.reg)
 	}

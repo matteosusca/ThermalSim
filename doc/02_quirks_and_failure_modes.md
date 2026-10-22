@@ -10,9 +10,10 @@ This document explains the real-world firmware quirks, hardware limitations, and
   - `DC2 *`: $N = r \times n$ bytes.
   - `DC2 V/v`: $N = 48 \times (n_L + 256 n_H)$ bytes.
   - `GS v 0`: $N = (x_L + 256 x_H) \times (y_L + 256 y_H)$ bytes.
-- **Quirk Reproduction:** The MCU enters `StateRawBitmap` and consumes exactly $N$ bytes. **No escape sequences (including `ESC @`, `LF`, or status commands) are parsed.**
+- **Quirk Reproduction:** The MCU enters `StateRawBitmap` (or `StateESCStarData`) and consumes the exact declared byte count. **No escape sequences (including `ESC @`, `LF`, or status commands) are parsed.**
   - If the host sends fewer bytes than declared, subsequent commands/text are swallowed as pixel bits.
   - If the host sends more bytes (e.g., trying to print 400 dots instead of 384), the extra bytes overflow into `StateNormal` and print as random CP437/GBK text and arbitrary formatting toggles.
+  - **`ESC *` Out-of-Range `m` Quirk (`203 User Manual` p.18):** If the mode byte $m \notin \{0, 1, 32, 33\}$ (plus $31$ on v2.16), the printer immediately aborts `ESC *` before reading `nL, nH`, processing `nL`, `nH`, and all following bytes as normal text!
 
 ---
 

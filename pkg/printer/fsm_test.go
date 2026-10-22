@@ -220,3 +220,71 @@ func TestFSMSingleLineDoubleWidthAutoCancel(t *testing.T) {
 		t.Fatal("SingleLineDoubleW must be automatically cleared on LF per hardware spec")
 	}
 }
+
+func TestFSMGoojprtQR203CommandsAndQuirks(t *testing.T) {
+	prof := &mockProfile{}
+	reg := NewRegisters(prof)
+	head := NewThermalHead(384)
+	fsm := NewFSM(prof, reg, head)
+
+	// 1. ESC * m nL nH with valid m=0 (8-dot single density, 2 columns = 2 bytes)
+	fsm.Step(0x1B)
+	fsm.Step('*')
+	fsm.Step(0) // m = 0
+	fsm.Step(2) // nL = 2
+	fsm.Step(0) // nH = 0
+	if fsm.state != StateESCStarData {
+		t.Fatalf("expected StateESCStarData, got %v", fsm.state)
+	}
+	fsm.Step(0xFF)
+	fsm.Step(0xAA)
+	if fsm.state != StateNormal || !fsm.lineBuf.hasContent {
+		t.Fatalf("expected ESC * to complete into lineBuf, state=%v", fsm.state)
+	}
+	fsm.Step(0x0A) // flush
+
+	// 2. ESC * invalid m quirk (203 User Manual p.18):
+	// If m is out of range (e.g. m=99), nL, nH and following data are processed as normal text!
+	fsm.Step(0x1B)
+	fsm.Step('*')
+	fsm.Step(99) // Invalid mode m
+	if fsm.state != StateNormal {
+		t.Fatalf("expected immediate return to StateNormal on invalid ESC * mode m, got %v", fsm.state)
+	}
+	fsm.Step('O')
+	fsm.Step('K')
+	if fsm.lineBuf.cursorCol != 2 {
+		t.Fatalf("expected 'O','K' processed as normal text, cursorCol=%d", fsm.lineBuf.cursorCol)
+	}
+	fsm.Step(0x0A)
+
+	// 3. ESC c 5 n (2-byte parameter sequence: '5' followed by n)
+	fsm.Step(0x1B)
+	fsm.Step('c')
+	fsm.Step('5')
+	fsm.Step(0x01) // Disable panel key
+	if reg.PanelKeyEnabled {
+		t.Fatal("expected PanelKeyEnabled=false after ESC c 5 1")
+	}
+
+	// 4. ESC 0 n1 n2 n3 d1..dk (Goojprt Bluetooth baudrate, name, password)
+	fsm.Step(0x1B)
+	fsm.Step('0')
+	fsm.Step(1) // 1 = 19200 bps
+	fsm.Step(5) // Name length = 5 ("QR203")
+	fsm.Step(4) // Password length = 4 ("1234")
+	for _, b := range []byte("QR2031234") {
+		fsm.Step(b)
+	}
+	if reg.BluetoothBaudIndex != 1 || reg.BluetoothName != "QR203" || reg.BluetoothPassword != "1234" {
+		t.Fatalf("unexpected ESC 0 state: baud=%d name=%q pass=%q", reg.BluetoothBaudIndex, reg.BluetoothName, reg.BluetoothPassword)
+	}
+
+	// 5. ESC ! n Bit 1 (Inverse) and Bit 7 (Underline)
+	fsm.Step(0x1B)
+	fsm.Step('!')
+	fsm.Step(0x82) // Bit 7 (Underline) + Bit 1 (Inverse)
+	if !reg.Inverse || reg.Underline != 1 {
+		t.Fatalf("expected Inverse=true and Underline=1, got Inverse=%v Underline=%d", reg.Inverse, reg.Underline)
+	}
+}

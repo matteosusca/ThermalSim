@@ -34,7 +34,7 @@ func (p *QR203Profile) BytesPerLine() int {
 }
 
 func (p *QR203Profile) DefaultBaudRate() int {
-	return 19200
+	return 9600 // Goojprt QR203 factory default baud rate (9600 bps)
 }
 
 func (p *QR203Profile) ReceiveBufferSize() int {
@@ -52,7 +52,10 @@ func (p *QR203Profile) DefaultLineSpacing() uint8 {
 }
 
 func (p *QR203Profile) MaxHeatingDots() uint8 {
-	return 7 // 8 * (7 + 1) = 64 dots
+	if p.version == printer.FirmwareV216 {
+		return 7 // 8 * (7 + 1) = 64 dots
+	}
+	return 9 // 8 * (9 + 1) = 80 dots per 203 User Manual p.61
 }
 
 func (p *QR203Profile) DefaultHeatingTime() uint8 {
