@@ -4,35 +4,28 @@
 
 The `ThermalSim` core parser processes input strictly byte-by-byte via `FSM.Step(b byte)`. It never uses regex, line tokenization, or lookahead buffering.
 
-```
-                          ┌─────────────┐
-                          │ StateNormal │ ◄──────────────────────────────┐
-                          └──────┬──────┘                                │
-            ┌────────────┬───────┼───────┬────────────┐                  │
-            ▼            ▼       ▼       ▼            ▼                  │
-        0x1B (ESC)   0x1D (GS)  0x12   0x1C (FS)  Printable              │
-            │            │     (DC2)     │         (0x20..0xFF)          │
-            ▼            ▼       │       ▼            │                  │
-        StateESC      StateGS    │    StateFS         ▼                  │
-            │            │       │       │       Render to               │
-            │            │       │       │       LineBuffer              │
-            ▼            ▼       ▼       ▼            │                  │
-         ┌───────────────────────────────┐            │                  │
-         │          StateParam           │            │                  │
-         └───────────────┬───────────────┘            │                  │
-                         │                            │                  │
-    ┌────────────────────┼────────────────────────┐   │                  │
-    ▼                    ▼                        ▼   │                  │
-Bitmap Mode          Barcode Mode              QR Code│                  │
-(DC2 *, DC2 V,      (GS k m ...)             (GS ( k) │                  │
- GS v 0, ESC *)          │                        │   │                  │
-    │                    ▼                        ▼   │                  │
-    ▼             StateBarcodeFormat1/2      StateQRPayload              │
-StateRawBitmap           │                        │   │                  │
-(Swallows bytes          │                        │   │                  │
- until count = 0)        ▼                        ▼   │                  │
-    │             GenerateBarcode          ProcessQRCommand              │
-    └────────────────────┴────────────────────────┴───┴──────────────────┘
+```mermaid
+flowchart TD
+    StateNormal["StateNormal"] -->|"0x1B (ESC)"| StateESC["StateESC"]
+    StateNormal -->|"0x1D (GS)"| StateGS["StateGS"]
+    StateNormal -->|"0x12 (DC2)"| StateDC2["StateDC2"]
+    StateNormal -->|"0x1C (FS)"| StateFS["StateFS"]
+    StateNormal -->|"0x20..0xFF (Printable)"| LineBuf["Render Glyph to LineBuffer"]
+
+    StateESC --> StateParam["StateParam (Fixed-Count Parameter Reader)"]
+    StateGS --> StateParam
+    StateDC2 --> StateParam
+    StateFS --> StateParam
+
+    StateParam -->|"DC2 * / DC2 V / GS v 0 / ESC *"| StateRawBitmap["StateRawBitmap (Raw Pixel Stream Consumer)"]
+    StateParam -->|"GS k (Barcode)"| StateBarcode["StateBarcodeFormat1 / StateBarcodeFormat2"]
+    StateParam -->|"GS ( k (QR Code)"| StateQR["StateQRPayload"]
+
+    StateRawBitmap -->|"Byte Count == 0"| StateNormal
+    StateBarcode -->|"GenerateBarcode()"| StateNormal
+    StateQR -->|"ProcessQRCommand()"| StateNormal
+    LineBuf -->|"LF (0x0A) or Line Overflow"| FlushHead["Burn Scanlines to ThermalHead"]
+    FlushHead --> StateNormal
 ```
 
 ---
@@ -47,12 +40,12 @@ StateRawBitmap           │                        │   │                  �
 
 ## 3. Thermal Physics & Motor Timing Formulas
 When a row of dots is burned to the paper, the duration is computed dynamically:
-$$T_{\text{row}} = N_{\text{strobe\_groups}} \times (T_{\text{heat}} + T_{\text{interval}}) + T_{\text{break}} + T_{\text{step}}$$
+$$T_{\text{row}} = N_{\text{strobe}} \times (T_{\text{heat}} + T_{\text{interval}}) + T_{\text{break}} + T_{\text{step}}$$
 Where:
-- $N_{\text{strobe\_groups}} = \lceil \text{activeDots} / (8 \times (n_1 + 1)) \rceil$
-- $T_{\text{heat}} = n_2 \times 10\,\mu\text{s}$ (default $800\,\mu\text{s}$)
-- $T_{\text{interval}} = n_3 \times 10\,\mu\text{s}$ (default $20\,\mu\text{s}$)
+- $N_{\text{strobe}} = \lceil \text{activeDots} / (8 \times (n_1 + 1)) \rceil$
+- $T_{\text{heat}} = n_2 \times 10\,\mu\text{s}$ (default 800 µs)
+- $T_{\text{interval}} = n_3 \times 10\,\mu\text{s}$ (default 20 µs)
 - $T_{\text{break}} = \text{D7..D5} \times 250\,\mu\text{s}$
-- $T_{\text{step}} = 2100\,\mu\text{s}$ (stepper motor physical advance time)
+- $T_{\text{step}} = 2100\,\mu\text{s}$ (stepper motor physical advance time, ~2.1 ms)
 
 In real-time mode (`--realtime`), this formula governs execution delays, causing unthrottled host byte streams to overrun the 4KB (or 256B) ring buffer and reproduce hardware desynchronization bugs.

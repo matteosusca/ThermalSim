@@ -8,28 +8,12 @@ Because of ThermalSim's strict **Separation of Concerns (SoC)** and **Open/Close
 
 ## 1. Architecture Overview
 
-```
-                        +---------------------------+
-                        |  pkg/transport (PTY/TCP)  |
-                        +---------------------------+
-                                      |
-                                      v
-                        +---------------------------+
-                        |    pkg/printer (Core)     |
-                        |   FSM, Head, Registers    |
-                        +---------------------------+
-                                      |
-                         implements   |  queries
-                                      v
-                        +---------------------------+
-                        |      printer.Profile      |
-                        +---------------------------+
-                               /             \
-                              v               v
-             +-----------------------+   +-----------------------+
-             |   pkg/models/qr203    |   |   pkg/models/<new>    |
-             |    (Goojprt 58mm)     |   |  (e.g., Epson 80mm)   |
-             +-----------------------+   +-----------------------+
+```mermaid
+flowchart TD
+    Transport["pkg/transport<br/>(PTY / TCP Bridge / RingBuffer)"] --> Core["pkg/printer (Core Engine)<br/>FSM, ThermalHead, Registers"]
+    Core -->|"queries capabilities"| Profile["printer.Profile (Interface)"]
+    ModelQR203["pkg/models/qr203<br/>(Goojprt 58mm / CSN-A2)"] -.->|"implements"| Profile
+    ModelNew["pkg/models/<new_model><br/>(e.g., Epson 80mm TM-T88)"] -.->|"implements"| Profile
 ```
 
 ---

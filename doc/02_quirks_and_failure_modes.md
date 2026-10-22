@@ -18,7 +18,7 @@ This document explains the real-world firmware quirks, hardware limitations, and
 ---
 
 ## 2. SRAM Buffer Overflow & Desynchronization
-- **Hardware Behavior:** The printer's micro-controller has a bounded receive ring buffer (4096 bytes on v2.69; 256 bytes on legacy clones). If the host sends unthrottled data faster than the physical thermal head can burn rows ($\sim 2.1\text{ ms}$ motor step + strobe duration) and DTR/RTS handshaking is ignored, the buffer overflows.
+- **Hardware Behavior:** The printer's micro-controller has a bounded receive ring buffer (4096 bytes on v2.69; 256 bytes on legacy clones). If the host sends unthrottled data faster than the physical thermal head can burn rows (~2.1 ms motor step + strobe duration) and DTR/RTS handshaking is ignored, the buffer overflows.
 - **Quirk Reproduction:** Incoming UART bytes while `RingBuffer.Full()` are silently dropped. Dropping bytes mid-command desynchronizes the byte stream, turning remaining bitmap chunks or text into garbage.
 
 ---
@@ -38,7 +38,7 @@ This document explains the real-world firmware quirks, hardware limitations, and
 
 ## 5. Bidirectional Status Query Quirks
 - **`ESC v n`:**
-  - Firmware v2.69 returns a single binary status byte (`Bit 0`: Online `0x01`, `Bit 2`: Paper Out `0x04`, `Bit 3`: Voltage $>9.5\text{V}$ `0x08`, `Bit 6`: Temp $>60^\circ\text{C}$ `0x40`).
+  - Firmware v2.69 returns a single binary status byte (`Bit 0`: Online `0x01`, `Bit 2`: Paper Out `0x04`, `Bit 3`: Voltage > 9.5V `0x08`, `Bit 6`: Temp > 60°C `0x40`).
   - Firmware v2.16 returns an ASCII string `P<Paper>V<Voltage>T<Degree>`.
 - **`GS r n`:**
   - When the paper-end sensor detects paper out, the printer goes offline and **does not execute or reply to `GS r`**.
@@ -47,4 +47,4 @@ This document explains the real-world firmware quirks, hardware limitations, and
 
 ## 6. Power Supply Voltage Sag & Brownout Reset
 - When high heating time (`ESC 7`) and maximum simultaneous heating dots fire on dark rows, simulated peak current causes voltage sag.
-- If effective voltage drops below $4.5\text{V}$, a simulated CPU brownout reset occurs: the current line buffer and volatile RAM are cleared.
+- If effective voltage drops below 4.5V, a simulated CPU brownout reset occurs: the current line buffer and volatile RAM are cleared.

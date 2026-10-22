@@ -14,10 +14,10 @@ ThermalSim/
 │   ├── models/
 │   │   └── qr203/          # QR203/CSN-A2 profile, fonts, code pages, barcodes, QR, quirks
 │   └── ui/                 # Presentation: embedded Web UI, WebSockets, PNG renderer
-├── doc/                    # Living system documentation & datasheets
+├── doc/                    # System documentation and hardware references
 ├── scripts/                # Verification and client test scripts
-├── AGENTS.md               # Guidelines for AI agents and human contributors
-├── ROADMAP.md              # Phased implementation plan and task tracking
+├── LICENSE                 # Project MIT License
+├── README.md               # Quickstart, visual showcase, and CLI reference
 └── ARCHITECTURE.md         # This architectural specification
 ```
 
@@ -28,6 +28,32 @@ ThermalSim/
 In physical thermal printers, two distinct clock domains operate simultaneously:
 1. **The UART Receiver Domain:** Driven by the serial line baud clock. Bytes arriving on RX trigger hardware interrupts that place bytes into an internal SRAM ring buffer and assert flow control (DTR/RTS) when near capacity.
 2. **The MCU & Mechanical Domain:** A sequential main loop that fetches bytes from the ring buffer, updates state registers, renders glyphs into the dot-line buffer, and periodically activates thermal head strobes and the stepper motor to feed paper.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Host as Host Software (POS / Driver)
+    participant Transport as PTY / TCP Socket
+    participant RingBuf as SRAM RingBuffer
+    participant FSM as MCU Parser (FSM.Step)
+    participant Head as ThermalHead & Motor
+    participant UI as Web Dashboard (SSE)
+
+    Host->>Transport: Raw Serial / TCP Bytes
+    Transport->>RingBuf: Push(byte) (drops on overflow)
+    loop MCU Clock Domain
+        RingBuf->>FSM: Pop() -> Step(b)
+        alt Line Feed or Bitmap Render
+            FSM->>Head: BurnCurrentLine()
+            Note over Head: Real-Time Strobe Delay (T_burn)
+            Head-->>UI: Broadcast OnRowBurned (SSE)
+        end
+        opt Status Query (e.g. ESC v)
+            FSM->>Transport: Emit Status Byte (TxChannel)
+            Transport->>Host: Serial TX Reply
+        end
+    end
+```
 
 ### Concurrency Model in Go:
 - **`transport.PTYBridge` / `transport.TCPBridge`**: Reads raw serial bytes and deposits them into `transport.RingBuffer`. If the ring buffer is full because the printhead is busy and the host ignored flow control, bytes are dropped and counted.

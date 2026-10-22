@@ -6,33 +6,12 @@ This document describes how the `esp32-todo-printer` host software connects tran
 
 ## Architecture Overview
 
-```
-                      +---------------------------------------+
-                      |          Telegram Bot API             |
-                      +---------------------------------------+
-                                          |
-                                          | (HTTPS Long Polling / aiohttp)
-                                          v
-                      +---------------------------------------+
-                      |         esp32-todo-printer            |
-                      | (TelegramListener -> Dispatcher -> Q) |
-                      +---------------------------------------+
-                                          |
-                                          | PrintWorker (64B chunks)
-                                          v
-                      +---------------------------------------+
-                      |       hardware.DesktopUART            |
-                      +---------------------------------------+
-                                    |           |
-             POSIX PTY (/tmp/qr203-tty0)        | Raw TCP Socket (:9100)
-                                    |           |
-                                    v           v
-                      +---------------------------------------+
-                      |        ThermalSim Digital Twin        |
-                      | - 203 DPI Head Physics                |
-                      | - ESC/POS Byte FSM & CGROM            |
-                      | - Live Web UI (http://localhost:8080) |
-                      +---------------------------------------+
+```mermaid
+flowchart TD
+    Telegram["Telegram Bot API"] -->|"HTTPS Long Polling (aiohttp)"| App["esp32-todo-printer<br/>(TelegramListener ➔ Dispatcher ➔ Queue)"]
+    App -->|"PrintWorker (64-byte paced chunks)"| UART["hardware.DesktopUART"]
+    UART -->|"POSIX PTY (/tmp/qr203-tty0)"| Sim["ThermalSim Digital Twin<br/>• 203 DPI Head Physics<br/>• ESC/POS Byte FSM & CGROM<br/>• Live Web UI (:8080)"]
+    UART -->|"Raw TCP Socket (:9100)"| Sim
 ```
 
 ---

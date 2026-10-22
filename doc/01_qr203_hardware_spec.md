@@ -4,25 +4,25 @@
 The **QR203** (manufactured under various OEM brandings including Cashino CSN-A2, Goojprt QR203, and EM205) is a miniature embedded 58mm direct thermal panel printer utilizing a Fujitsu FTP-628MCL101/103 class printing mechanism and a dedicated ESC/POS microcontroller board.
 
 - **Printing Method:** Direct thermal line printing
-- **Resolution:** 203.2 DPI ($8\text{ dots/mm}$)
-- **Total Print Width:** $48\text{ mm} = 384\text{ dots} = 48\text{ bytes per line}$
-- **Paper Roll Width:** $57.5 \pm 0.5\text{ mm}$, maximum roll diameter $39\text{–}40\text{ mm}$ ($55\text{ mm}$ on open-frame bracket)
-- **Chassis Dimensions (Goojprt QR203):** $76.8 \times 77.4 \times 47.65\text{ mm}$ (panel cutout $72.8 \times 73.25\text{ mm}$, depth $34.55\text{ mm}$)
-- **Printing Speed:** $50\text{–}60\text{ mm/s}$ nominal (up to $80\text{–}90\text{ mm/s}$ at $8.5\text{V–}9\text{V}$)
-- **Head Lifetime:** $\approx 50\text{ km}$ thermal element travel
-- **Input Supply Voltage:** $5\text{V to }9\text{V}$ ($2\text{A}$ peak) or $12\text{V}$ on industrial variants
-- **Serial Interface:** RS-232C ($\pm 12\text{V}$) or TTL level UART ($0\text{–}3.3\text{V}/5\text{V}$, `8N1`) and Mini-B USB
-- **Factory Default Baud Rate:** **$9600\text{ bps}$** on Goojprt QR203 (configurable via `ESC 0 n1 n2 n3 d1..dk`: `0`=9600, `1`=19200, `2`=38400, `3`=57600, `4`=115200 bps)
+- **Resolution:** 203.2 DPI (8 dots/mm)
+- **Total Print Width:** 48 mm = 384 dots = 48 bytes per line
+- **Paper Roll Width:** 57.5 ± 0.5 mm, maximum roll diameter 39–40 mm (55 mm on open-frame bracket)
+- **Chassis Dimensions (Goojprt QR203):** 76.8 × 77.4 × 47.65 mm (panel cutout 72.8 × 73.25 mm, depth 34.55 mm)
+- **Printing Speed:** 50–60 mm/s nominal (up to 80–90 mm/s at 8.5V–9V)
+- **Head Lifetime:** ≈ 50 km thermal element travel
+- **Input Supply Voltage:** 5V to 9V (2A peak) or 12V on industrial variants
+- **Serial Interface:** RS-232C (±12V) or TTL level UART (0–3.3V/5V, `8N1`) and Mini-B USB
+- **Factory Default Baud Rate:** **9600 bps** on Goojprt QR203 (configurable via `ESC 0 n1 n2 n3 d1..dk`: `0`=9600, `1`=19200, `2`=38400, `3`=57600, `4`=115200 bps)
 - **Default Heating Parameters (`ESC 7`):**
-  - Goojprt 203 (v2.69): `n1=9` ($80\text{ dots}$), `n2=80` ($800\text{ }\mu\text{s}$), `n3=2` ($20\text{ }\mu\text{s}$)
-  - Legacy (v2.16): `n1=7` ($64\text{ dots}$), `n2=80` ($800\text{ }\mu\text{s}$), `n3=2` ($20\text{ }\mu\text{s}$)
+  - Goojprt 203 (v2.69): `n1=9` (80 dots), `n2=80` (800 µs), `n3=2` (20 µs)
+  - Legacy (v2.16): `n1=7` (64 dots), `n2=80` (800 µs), `n3=2` (20 µs)
 - **Internal SRAM Receive Buffer:**
   - Standard (Firmware v2.64–v2.69): **4096 bytes**
   - Legacy/Clone: **256 bytes** (reproduces unthrottled bitmap buffer overflow bugs)
 - **Built-in Character Sets:**
-  - Font A: $12 \times 24$ dots ($32$ characters per line)
-  - Font B: $9 \times 17$ dots ($42$ characters per line)
-  - Chinese/GB18030: $24 \times 24$ dots ($16$ characters per line)
+  - Font A: 12 × 24 dots (32 characters per line)
+  - Font B: 9 × 17 dots (42 characters per line)
+  - Chinese/GB18030: 24 × 24 dots (16 characters per line)
 - **Code Pages:** 48 selectable code pages via `ESC t n` (Default `0`: CP437, `1`: Katakana, `2`: CP850, `16`: WPC1252)
 - **International Sets:** 16 sets via `ESC R n` (USA, France, Germany, UK, Denmark I/II, Sweden, Italy, Spain I/II, Japan, Norway, Latin America, Korea, Slovenia/Croatia, China)
 
@@ -32,11 +32,11 @@ The **QR203** (manufactured under various OEM brandings including Cashino CSN-A2
 **Goojprt QR203 (`203 User Manual` / EPM203-MRS board connectors):**
 - **J3 (TTL 5-pin Molex 53047) & J4 (RS232 5-pin Molex 53047):**
   1. `GND`: Ground
-  2. `TXD`: Transmit data (Printer output $\rightarrow$ Host RX)
-  3. `RXD`: Receive data (Printer input $\leftarrow$ Host TX)
+  2. `TXD`: Transmit data (Printer output ➔ Host RX)
+  3. `RXD`: Receive data (Printer input ➔ Host TX)
   4. `CTS/DSR`: Flow control input
   5. `RTS/DTR`: Flow control output
-- **J5 (Power Connector):** `GND` and `VH` ($5\text{V–}9\text{V}$ DC)
+- **J5 (Power Connector):** `GND` and `VH` (5V–9V DC)
 - **USB Connector (Mini-B 5-pin):** `1: VBUS`, `2: D-`, `3: D+`, `4: ID`, `5: GND`
 
 ---
@@ -48,7 +48,7 @@ The **QR203** (manufactured under various OEM brandings including Cashino CSN-A2
   - 2 Flashes: Mechanism disconnected or head temperature too low
   - 3 Flashes: Out of paper
   - 4 Flashes: Cutter error (for models with cutter)
-  - 5 Flashes: Thermal head overheating ($>60^\circ\text{C}\text{–}65^\circ\text{C}$)
+  - 5 Flashes: Thermal head overheating (>60°C–65°C)
   - 6 Flashes: Platen/roller not engaged
   - 10 Flashes: Flash ROM error
 
