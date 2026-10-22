@@ -1,11 +1,15 @@
 package transport
 
 import (
+	"errors"
 	"io"
 	"sync"
 	"time"
 	"thermalsim/pkg/printer"
 )
+
+// ErrPTYUnsupported is returned on platforms without POSIX /dev/ptmx (e.g., Windows).
+var ErrPTYUnsupported = errors.New("POSIX PTY virtual serial ports are not natively supported on this OS")
 
 // Bridge coordinates data flow between the transport I/O, the SRAM ring buffer, and the printer FSM.
 type Bridge struct {

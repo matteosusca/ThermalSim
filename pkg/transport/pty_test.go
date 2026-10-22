@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -39,6 +40,9 @@ func TestPTYLoopbackAndStatus(t *testing.T) {
 	symlink := "/tmp/qr203-test-tty"
 	pty, err := OpenPTY(symlink)
 	if err != nil {
+		if errors.Is(err, ErrPTYUnsupported) {
+			t.Skipf("skipping PTY loopback test: %v", err)
+		}
 		t.Fatalf("failed to open PTY: %v", err)
 	}
 	defer pty.Close()

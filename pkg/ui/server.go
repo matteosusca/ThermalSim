@@ -204,9 +204,15 @@ func (ws *WebServer) statusBroadcastLoop() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		led := ws.head.CurrentLEDState(ws.reg)
+		var led int
+		var temp, volt float64
+		ws.fsm.WithRegisters(func(reg *printer.Registers, head *printer.ThermalHead) {
+			led = head.CurrentLEDState(reg)
+			temp = reg.HeadTemperature
+			volt = reg.SupplyVoltage
+		})
 		data := fmt.Sprintf(`{"led":%d,"temperature":%.1f,"voltage":%.1f,"bufferLen":%d,"bufferCap":%d,"droppedBytes":%d}`,
-			led, ws.reg.HeadTemperature, ws.reg.SupplyVoltage, ws.ringBuf.Len(), ws.ringBuf.Cap(), ws.ringBuf.DroppedBytes())
+			led, temp, volt, ws.ringBuf.Len(), ws.ringBuf.Cap(), ws.ringBuf.DroppedBytes())
 		ws.broadcastSSE("status", data)
 	}
 }
@@ -223,9 +229,11 @@ func (ws *WebServer) handleClear(w http.ResponseWriter, r *http.Request) {
 }
 
 func (ws *WebServer) handleFeed(w http.ResponseWriter, r *http.Request) {
-	if ws.reg.PanelKeyEnabled {
-		ws.head.FeedRows(30, ws.reg)
-	}
+	ws.fsm.WithRegisters(func(reg *printer.Registers, head *printer.ThermalHead) {
+		if reg.PanelKeyEnabled {
+			head.FeedRows(30, reg)
+		}
+	})
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -241,18 +249,20 @@ func (ws *WebServer) handleFaults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if body.PaperState != nil {
-		ws.reg.PaperState = printer.PaperStatus(*body.PaperState)
-	}
-	if body.PlatenOpen != nil {
-		ws.reg.PlatenOpen = *body.PlatenOpen
-	}
-	if body.Temperature != nil {
-		ws.reg.HeadTemperature = *body.Temperature
-	}
-	if body.Voltage != nil {
-		ws.reg.SupplyVoltage = *body.Voltage
-	}
+	ws.fsm.WithRegisters(func(reg *printer.Registers, _ *printer.ThermalHead) {
+		if body.PaperState != nil {
+			reg.PaperState = printer.PaperStatus(*body.PaperState)
+		}
+		if body.PlatenOpen != nil {
+			reg.PlatenOpen = *body.PlatenOpen
+		}
+		if body.Temperature != nil {
+			reg.HeadTemperature = *body.Temperature
+		}
+		if body.Voltage != nil {
+			reg.SupplyVoltage = *body.Voltage
+		}
+	})
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -263,14 +273,16 @@ func (ws *WebServer) handlePower(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 
-	if !body.Power {
-		// Powered off
-		ws.reg.Online = false
-	} else {
-		// Powered on / reboot
-		ws.reg.Reset(ws.prof)
-		ws.ringBuf.Reset()
-	}
+	ws.fsm.WithRegisters(func(reg *printer.Registers, _ *printer.ThermalHead) {
+		if !body.Power {
+			// Powered off
+			reg.Online = false
+		} else {
+			// Powered on / reboot
+			reg.Reset(ws.prof)
+			ws.ringBuf.Reset()
+		}
+	})
 	w.WriteHeader(http.StatusOK)
 }
 

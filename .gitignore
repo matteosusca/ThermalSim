@@ -5,9 +5,15 @@ bin/
 
 # Generated receipt outputs & temporary test files
 *.png
+!doc/assets/*.png
 /tmp/qr203*
 
 # OS / Editor artifacts
 .DS_Store
 .vscode/
 .idea/
+
+# Agentic guidelines & local vendor datasheets
+AGENTS.md
+ROADMAP.md
+doc/datasheets/

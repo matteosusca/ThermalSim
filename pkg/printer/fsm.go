@@ -172,6 +172,14 @@ func (f *FSM) TxChannel() <-chan byte {
 	return f.txOut
 }
 
+// WithRegisters executes fn while holding the FSM state mutex, ensuring
+// thread-safe access to Registers and ThermalHead from external UI/control goroutines.
+func (f *FSM) WithRegisters(fn func(reg *Registers, head *ThermalHead)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	fn(f.reg, f.head)
+}
+
 // Step processes a single raw byte from the serial transport stream.
 func (f *FSM) Step(b byte) {
 	f.mu.Lock()

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -94,7 +95,11 @@ func main() {
 		var err error
 		pty, err = transport.OpenPTY(*ptyPath)
 		if err != nil {
-			log.Printf("Warning: Could not allocate PTY at %s: %v", *ptyPath, err)
+			if errors.Is(err, transport.ErrPTYUnsupported) {
+				fmt.Printf("• Virtual Serial   : Disabled (POSIX PTY not available on this OS; use Raw TCP Socket)\n")
+			} else {
+				log.Printf("Warning: Could not allocate PTY at %s: %v", *ptyPath, err)
+			}
 		} else {
 			defer pty.Close()
 			fmt.Printf("• Virtual Serial   : %s (Slave PTS: %s)\n", pty.DevicePath(), pty.SlavePath())
