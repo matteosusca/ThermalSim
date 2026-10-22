@@ -19,6 +19,38 @@ func TestFontsAndMetrics(t *testing.T) {
 	if len(fontBGlyph) != 9*17 {
 		t.Fatalf("expected Font B glyph len %d, got %d", 9*17, len(fontBGlyph))
 	}
+
+	// Verify native 12x24 CGROM glyph 'A' has serifs at baseline row 20 (0xF0F = ####....####)
+	if fontA12x24['A'-0x20][20] != 0xF0F {
+		t.Fatalf("expected native ASC24 baseline serif 0xF0F for 'A', got 0x%03X", fontA12x24['A'-0x20][20])
+	}
+
+	// Verify native 9x17 CGROM glyph 'A' has serifs at baseline row 14 (0x1C7 = ###...###)
+	if fontB9x17['A'-0x20][14] != 0x1C7 {
+		t.Fatalf("expected native ASC17 baseline serif 0x1C7 for 'A', got 0x%03X", fontB9x17['A'-0x20][14])
+	}
+
+	// Verify extended CP437, CP858 Euro, and International characters render non-empty glyphs
+	extGlyphs := [][]byte{
+		prof.RenderChar(0x82, printer.FontA, 0, 0),  // CP437 'é'
+		prof.RenderChar(0x9C, printer.FontA, 0, 0),  // CP437 '£'
+		prof.RenderChar(0xDB, printer.FontA, 0, 0),  // CP437 '█'
+		prof.RenderChar(0xC4, printer.FontA, 0, 0),  // CP437 '─'
+		prof.RenderChar(0xD5, printer.FontA, 19, 0), // CP858 '€'
+		prof.RenderChar('@', printer.FontA, 0, 1),   // France 'à'
+		prof.RenderChar('@', printer.FontB, 0, 2),   // Germany '§' in Font B
+	}
+	for i, g := range extGlyphs {
+		dots := 0
+		for _, v := range g {
+			if v > 0 {
+				dots++
+			}
+		}
+		if dots == 0 {
+			t.Fatalf("expected non-empty bitmap for extended glyph case %d", i)
+		}
+	}
 }
 
 func TestInternationalCharset(t *testing.T) {

@@ -123,8 +123,21 @@ func DecodeByteToRune(b byte, codePage int, intlSet int) rune {
 
 	idx := int(b - 0x80)
 	switch codePage {
-	case 2: // CP850
+	case 2: // CP850 [Multilingual]
 		return cp850Runes[idx]
+	case 19: // CP858 [Multilingual Latin I + Euro]
+		if b == 0xD5 {
+			return '€'
+		}
+		return cp850Runes[idx]
+	case 16, 23: // WCP1252 / ISO-8859-1 [West Europe]
+		if b == 0x80 {
+			return '€'
+		}
+		if b >= 0xA0 {
+			return rune(b)
+		}
+		return cp437Runes[idx]
 	default: // Default CP437
 		return cp437Runes[idx]
 	}

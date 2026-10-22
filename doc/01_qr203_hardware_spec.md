@@ -45,3 +45,19 @@ Standard 6-pin serial connector:
   - 5 Flashes: Thermal head overheating ($>60^\circ\text{C}\text{–}65^\circ\text{C}$)
   - 6 Flashes: Platen/roller not engaged
   - 10 Flashes: Flash ROM error
+
+---
+
+## 4. Native CGROM Font Matrices (`pkg/models/qr203/rom_fonts.go`)
+The physical QR203 / CSN-A2 stores character bitmaps inside its onboard GB18030 / ANK Character Generator ROM (CGROM):
+- **Font A (`12×24` dots, `ASC24`):**
+  - 12 horizontal dots $\times$ 24 vertical dots (36 bytes in column-major 3-byte format per character, stored in `fontA12x24` as 24 rows of 12-bit masks).
+  - Cap top at row 5, baseline at row 20, descenders (`g, j, p, q, y, ;, ,`) extending to row 23, and diacritic space in rows `0..4` (uppercase) / `5..8` (lowercase).
+  - Features native Songti/serifed proportions (`0xF0F` baseline serifs on `'A'`, vertical tick on `'2'`, raised apex on `'4'`) matching the scanned printouts in the Cashino CSN-A2 manual (Pages 27, 46–47).
+- **Font B (`9×17` dots, `ASC17`):**
+  - 9 horizontal dots $\times$ 17 vertical dots (`fontB9x17`, 42 characters per 384-dot line), selected via `ESC ! 1` or `ESC M 1`.
+  - Cap top at row 3, baseline at row 14, descenders at rows `15..16`.
+- **Extended Code Pages & International Character Sets:**
+  - Native $12\times24$ and $9\times17$ glyphs for CP437, CP850, CP858 (`€`), WCP1252, and `ESC R 0..15` International substitutions, including diacritics, edge-to-edge box-drawing (`0xB0..0xDF`), block shading (`░▒▓█`), and currency/math symbols.
+- **No Artificial Blur / Thermal Bleed:**
+  - Dots are rendered with crisp 1:1 hardware dot accuracy (zero interpolation or artificial blur).

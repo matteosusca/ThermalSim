@@ -66,18 +66,14 @@ func (p *QR203Profile) DefaultHeatingInterval() uint8 {
 func (p *QR203Profile) RenderChar(code byte, font printer.FontType, codePage int, intlSet int) []byte {
 	// Translate byte via CodePage and IntlCharset
 	r := DecodeByteToRune(code, codePage, intlSet)
-	resolvedCode := byte(r)
-	if r > 0x7E && r <= 0xFF {
-		resolvedCode = byte(r)
-	}
 
 	switch font {
 	case printer.FontB:
-		return RenderGlyphFontB(resolvedCode)
+		return RenderRuneFontB(r)
 	case printer.FontKanji:
 		return RenderGlyphKanji(code, 0)
 	default:
-		return RenderGlyphFontA(resolvedCode)
+		return RenderRuneFontA(r)
 	}
 }
 

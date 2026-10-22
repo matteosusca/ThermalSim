@@ -289,8 +289,16 @@ func (f *FSM) handleNormal(b byte) {
 		f.emit(b, "FS Prefix")
 
 	case 0x0A: // LF
-		f.flushLineBuffer()
-		f.head.FeedRows(f.reg.LineSpacing, f.reg.ResetLineDoubleWidth())
+		printed := f.flushLineBuffer()
+		feed := f.reg.LineSpacing - printed
+		if printed == 0 {
+			feed = f.reg.LineSpacing
+		}
+		if feed > 0 {
+			f.head.FeedRows(feed, f.reg.ResetLineDoubleWidth())
+		} else {
+			f.reg.ResetLineDoubleWidth()
+		}
 		f.emit(b, "LF (Line Feed)")
 
 	case 0x0D: // CR
@@ -329,7 +337,7 @@ func (f *FSM) handleESC(b byte) {
 		f.state = StateNormal
 		f.emit(b, "ESC @ (Initialize)")
 
-	case '!', '3', 'a', 'J', 'd', 'E', 'G', '-', '{', 'V', 'R', 't', ' ', 'B', '=', 'c', '%', '?':
+	case '!', 'M', '3', 'a', 'J', 'd', 'E', 'G', '-', '{', 'V', 'R', 't', ' ', 'B', '=', 'c', '%', '?':
 		// 1-parameter commands
 		f.paramNeed = 1
 		f.paramBuf = f.paramBuf[:0]
@@ -548,6 +556,12 @@ func (f *FSM) executeEscParam(cmd byte, p []byte) {
 	switch cmd {
 	case '!': // ESC ! n
 		f.applyEscExclamation(p[0])
+	case 'M': // ESC M n: Select character font (0,48 = Font A 12x24; 1,49 = Font B 9x17)
+		if (p[0] & 1) != 0 {
+			f.reg.Font = FontB
+		} else {
+			f.reg.Font = FontA
+		}
 	case '3': // ESC 3 n
 		f.reg.LineSpacing = int(p[0])
 	case 'a': // ESC a n
@@ -1055,8 +1069,10 @@ func (f *FSM) renderPrintableChar(b byte) {
 
 	// Line buffer wrap check
 	if f.lineBuf.cursorX+renderW > 384 {
-		f.flushLineBuffer()
-		f.head.FeedRows(f.reg.LineSpacing, f.reg)
+		printed := f.flushLineBuffer()
+		if extra := f.reg.LineSpacing - printed; extra > 0 {
+			f.head.FeedRows(extra, f.reg)
+		}
 	}
 
 	f.renderGlyphIntoLine(glyph, charWidth, charHeight)
@@ -1135,19 +1151,43 @@ func (f *FSM) renderGlyphIntoLine(glyph []uint8, srcW, srcH int) {
 	f.lineBuf.cursorX += destW + f.reg.RightSideSpacing
 }
 
-func (f *FSM) flushLineBuffer() {
+func (f *FSM) flushLineBuffer() int {
 	if !f.lineBuf.hasContent {
 		f.lineBuf.Reset()
-		return
+		return 0
+	}
+
+	printedHeight := f.lineBuf.height
+
+	// Compute horizontal shift for Center (Justify=1) or Right (Justify=2) alignment
+	shift := 0
+	availWidth := 384 - f.reg.LeftMargin
+	if f.lineBuf.cursorX > 0 && f.lineBuf.cursorX < availWidth {
+		switch f.reg.Justify {
+		case 1: // Center
+			shift = (availWidth - f.lineBuf.cursorX) / 2
+		case 2: // Right
+			shift = availWidth - f.lineBuf.cursorX
+		}
 	}
 
 	// Burn each active row of the line buffer to the thermal head
-	for r := 0; r < f.lineBuf.height; r++ {
+	for r := 0; r < printedHeight; r++ {
 		row := f.lineBuf.matrix[r]
+		if shift > 0 {
+			shifted := make([]uint8, 384)
+			for x := f.reg.LeftMargin; x < f.reg.LeftMargin+f.lineBuf.cursorX && x < 384; x++ {
+				if x+shift < 384 {
+					shifted[x+shift] = row[x]
+				}
+			}
+			row = shifted
+		}
 		f.head.BurnRow(row, f.reg)
 	}
 
 	f.lineBuf.Reset()
+	return printedHeight
 }
 
 func (f *FSM) emit(b byte, desc string) {

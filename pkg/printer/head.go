@@ -192,8 +192,8 @@ func (th *ThermalHead) BurnRow(rawBits []uint8, reg *Registers) (time.Duration, 
 		}
 	}
 
-	// Accumulate heat in head
-	th.currentTemp += float64(activeDots*heatTimeUs) / 250000.0
+	// Accumulate heat in ceramic/aluminum thermal head heatsink
+	th.currentTemp += float64(activeDots*heatTimeUs) / 2500000.0
 	reg.HeadTemperature = th.currentTemp
 
 	th.paperStrip = append(th.paperStrip, row)
