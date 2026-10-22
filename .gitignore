@@ -1,0 +1,13 @@
+# Binaries
+bin/
+*.exe
+*.test
+
+# Generated receipt outputs & temporary test files
+*.png
+/tmp/qr203*
+
+# OS / Editor artifacts
+.DS_Store
+.vscode/
+.idea/

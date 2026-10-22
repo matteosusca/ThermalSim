@@ -1,0 +1,3 @@
+module thermalsim
+
+go 1.27.2
