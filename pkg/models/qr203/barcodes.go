@@ -4,14 +4,8 @@ import (
 	"thermalsim/pkg/printer"
 )
 
-// BarcodePattern defines a 1D barcode bar/space module bitmask.
-type BarcodeResult struct {
-	Rows [][]uint8 // Each row is 384 dots (1 = black, 0 = white)
-	HRI  string    // Human readable text
-}
-
 // GenerateBarcode renders a 1D barcode according to ESC/POS GS k specifications.
-func GenerateBarcode(m int, data []byte, reg *printer.Registers) *BarcodeResult {
+func GenerateBarcode(m int, data []byte, reg *printer.Registers) *printer.BarcodeResult {
 	// Normalize m to 0..8
 	system := m
 	if system >= 65 {
@@ -64,7 +58,7 @@ func GenerateBarcode(m int, data []byte, reg *printer.Registers) *BarcodeResult 
 		barcodeHeight = 50
 	}
 
-	res := &BarcodeResult{
+	res := &printer.BarcodeResult{
 		Rows: make([][]uint8, 0, barcodeHeight+30),
 		HRI:  hriText,
 	}

@@ -85,6 +85,18 @@ func (p *QR203Profile) RenderKanji(c1, c2 byte) []byte {
 	return RenderGlyphKanji(c1, c2)
 }
 
+func (p *QR203Profile) GenerateBarcode(m int, data []byte, reg *printer.Registers) *printer.BarcodeResult {
+	return GenerateBarcode(m, data, reg)
+}
+
+func (p *QR203Profile) ProcessQRCommand(fn byte, payload []byte, reg *printer.Registers) [][]uint8 {
+	return ProcessQRCommand(fn, payload, reg)
+}
+
+func (p *QR203Profile) GenerateSelfTestPage(reg *printer.Registers) [][]uint8 {
+	return GenerateSelfTestPage(p, reg)
+}
+
 func (p *QR203Profile) SupportsQRCode() bool {
 	// QR codes are supported natively on v2.64+ firmware
 	return p.version != printer.FirmwareV216

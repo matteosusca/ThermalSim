@@ -267,6 +267,15 @@ func (d *dummyProfile) RenderChar(code byte, font FontType, codePage int, intlSe
 	return nil
 }
 func (d *dummyProfile) RenderKanji(c1, c2 byte) []byte { return nil }
+func (d *dummyProfile) GenerateBarcode(m int, data []byte, reg *Registers) *BarcodeResult {
+	return nil
+}
+func (d *dummyProfile) ProcessQRCommand(fn byte, payload []byte, reg *Registers) [][]uint8 {
+	return nil
+}
+func (d *dummyProfile) GenerateSelfTestPage(reg *Registers) [][]uint8 {
+	return nil
+}
 func (d *dummyProfile) SupportsQRCode() bool           { return true }
 func (d *dummyProfile) SupportsBarcode(system int) bool { return true }
 
