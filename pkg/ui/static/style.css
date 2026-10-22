@@ -150,27 +150,60 @@ header {
 
 .paper-container {
   flex: 1;
-  background: #2a2d34;
+  background: #232730;
   overflow-y: auto;
-  padding: 24px 20px;
+  padding: 30px 20px;
   display: flex;
   flex-direction: column;
   align-items: center;
   position: relative;
 }
 
+/* Realistic 57.5mm thermal paper sheet with bordino and margins */
+.paper-sheet {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: #fafaf9;
+  border: 1px solid #cbd5e1;
+  border-radius: 2px;
+  box-shadow: 0 12px 28px -4px rgba(0, 0, 0, 0.55), 0 4px 10px -2px rgba(0, 0, 0, 0.35);
+  padding: 14px 24px; /* 24px physical white paper margin on left/right matching 57.5mm roll */
+  width: 384px;
+  box-sizing: content-box;
+  position: relative;
+  transition: transform 0.2s ease;
+}
+
 .paper-tear-edge {
-  width: 400px;
+  width: calc(100% + 48px);
+  margin-left: -24px;
+  margin-right: -24px;
   height: 6px;
-  background: repeating-linear-gradient(45deg, transparent, transparent 4px, #3a3f4d 4px, #3a3f4d 8px);
-  margin-bottom: -2px;
+  background-size: 12px 6px;
+  background-repeat: repeat-x;
   z-index: 2;
+}
+
+.paper-tear-top {
+  margin-bottom: 10px;
+  background-image: linear-gradient(135deg, #232730 25%, transparent 25%),
+                    linear-gradient(225deg, #232730 25%, transparent 25%);
+  border-bottom: 1px dashed #d1d5db;
+}
+
+.paper-tear-bottom {
+  margin-top: 10px;
+  background-image: linear-gradient(315deg, #232730 25%, transparent 25%),
+                    linear-gradient(45deg, #232730 25%, transparent 25%);
+  border-top: 1px dashed #d1d5db;
 }
 
 #paper-canvas {
   background: #fafaf9;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
-  border-radius: 1px;
+  display: block;
+  border-left: 1px dotted rgba(203, 213, 225, 0.7);
+  border-right: 1px dotted rgba(203, 213, 225, 0.7);
   image-rendering: pixelated;
   image-rendering: -moz-crisp-edges;
   image-rendering: crisp-edges;

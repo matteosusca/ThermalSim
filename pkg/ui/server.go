@@ -56,6 +56,7 @@ func (ws *WebServer) Start() error {
 	mux.Handle("/", http.FileServer(http.FS(subFS)))
 	mux.HandleFunc("/api/stream", ws.handleSSEStream)
 	mux.HandleFunc("/api/receipt.png", ws.handleDownloadPNG)
+	mux.HandleFunc("/api/paper", ws.handlePaperData)
 	mux.HandleFunc("/api/clear", ws.handleClear)
 	mux.HandleFunc("/api/feed", ws.handleFeed)
 	mux.HandleFunc("/api/faults", ws.handleFaults)
@@ -131,7 +132,7 @@ func (ws *WebServer) handleSSEStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clientChan := make(chan string, 128)
+	clientChan := make(chan string, 8192)
 	ws.mu.Lock()
 	ws.sseClients[clientChan] = struct{}{}
 	ws.mu.Unlock()
@@ -156,9 +157,32 @@ func (ws *WebServer) handleSSEStream(w http.ResponseWriter, r *http.Request) {
 			return
 		case msg := <-clientChan:
 			fmt.Fprint(w, msg)
+			// Drain any immediately pending messages before flushing to prevent syscall lag
+		drainLoop:
+			for {
+				select {
+				case next := <-clientChan:
+					fmt.Fprint(w, next)
+				default:
+					break drainLoop
+				}
+			}
 			flusher.Flush()
 		}
 	}
+}
+
+func (ws *WebServer) handlePaperData(w http.ResponseWriter, r *http.Request) {
+	strip := ws.head.GetPaperStrip()
+	w.Header().Set("Content-Type", "application/json")
+	rows := make([]string, len(strip))
+	for i, r := range strip {
+		rows[i] = hex.EncodeToString(r)
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"totalRows": len(strip),
+		"rows":      rows,
+	})
 }
 
 func (ws *WebServer) broadcastSSE(event, data string) {

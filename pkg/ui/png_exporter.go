@@ -20,17 +20,20 @@ func ExportPNG(w io.Writer, strip [][]uint8, includeMargins bool) error {
 	}
 
 	height := len(strip)
-	margin := 0
+	leftRightMargin := 0
+	topBottomMargin := 0
 	if includeMargins {
-		margin = 24 // 3mm paper margin on left and right
+		leftRightMargin = 24 // 3mm physical unprinted paper margin on left and right (57.5mm total width)
+		topBottomMargin = 16 // Physical top/bottom receipt paper margin
 	}
-	totalWidth := dotsWidth + margin*2
+	totalWidth := dotsWidth + leftRightMargin*2
+	totalHeight := height + topBottomMargin*2
 
-	img := image.NewRGBA(image.Rect(0, 0, totalWidth, height))
+	img := image.NewRGBA(image.Rect(0, 0, totalWidth, totalHeight))
 
 	// Paper background: slight off-white thermal paper tint (0xFA, 0xFA, 0xF9)
 	paperWhite := color.RGBA{R: 250, G: 250, B: 249, A: 255}
-	for y := 0; y < height; y++ {
+	for y := 0; y < totalHeight; y++ {
 		for x := 0; x < totalWidth; x++ {
 			img.Set(x, y, paperWhite)
 		}
@@ -43,8 +46,32 @@ func ExportPNG(w io.Writer, strip [][]uint8, includeMargins bool) error {
 				// Darkness: 255 = black, lower values = lighter thermal gray
 				shade := uint8(255 - darkness)
 				dotColor := color.RGBA{R: shade, G: shade, B: shade, A: 255}
-				img.Set(margin+x, y, dotColor)
+				img.Set(leftRightMargin+x, topBottomMargin+y, dotColor)
 			}
+		}
+	}
+
+	// Draw realistic subtle paper borders and decorative tear edges if margins are included
+	if includeMargins {
+		borderColor := color.RGBA{R: 209, G: 213, B: 219, A: 255} // #d1d5db subtle border
+
+		// Left and right paper outer edges
+		for y := 0; y < totalHeight; y++ {
+			img.Set(0, y, borderColor)
+			img.Set(totalWidth-1, y, borderColor)
+		}
+
+		// Top and bottom serrated tear edges (zigzag teeth)
+		for x := 0; x < totalWidth; x++ {
+			// 4-pixel pitch zigzag: tooth = |(x % 8) - 4|
+			tooth := (x % 8) - 4
+			if tooth < 0 {
+				tooth = -tooth
+			}
+			// Top tear edge
+			img.Set(x, tooth, borderColor)
+			// Bottom tear edge
+			img.Set(x, totalHeight-1-tooth, borderColor)
 		}
 	}
 
