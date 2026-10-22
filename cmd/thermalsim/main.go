@@ -1,0 +1,173 @@
+package main
+
+import (
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"thermalsim/pkg/models/qr203"
+	"thermalsim/pkg/printer"
+	"thermalsim/pkg/transport"
+	"thermalsim/pkg/ui"
+)
+
+func main() {
+	ptyPath := flag.String("pty", "/tmp/qr203-tty0", "Path for the virtual serial PTY symlink")
+	tcpAddr := flag.String("tcp", ":9100", "Listen address for raw TCP socket bridge (e.g. :9100)")
+	httpAddr := flag.String("http", ":8080", "Listen address for Web UI (e.g. :8080)")
+	realTime := flag.Bool("realtime", false, "Enable real-time microsecond thermal strobe and motor physics delays")
+	firmware := flag.String("firmware", "2.69", "Firmware revision (2.69 or 2.16)")
+	bufferSize := flag.Int("buffer", 0, "Override receive SRAM ring buffer capacity in bytes (0 for profile default)")
+	inputFile := flag.String("in", "", "Input byte stream file for headless batch execution")
+	outputPNG := flag.String("out", "", "Output PNG path for headless receipt rendering")
+	flag.Parse()
+
+	// 1. Initialize Profile & Hardware Core
+	var fRev printer.FirmwareRevision
+	if *firmware == "2.16" {
+		fRev = printer.FirmwareV216
+	} else {
+		fRev = printer.FirmwareV269
+	}
+	prof := qr203.NewQR203Profile(fRev)
+	reg := printer.NewRegisters(prof)
+	head := printer.NewThermalHead(prof.DotsPerLine())
+	head.SetRealTimePhysics(*realTime)
+
+	bufCap := prof.ReceiveBufferSize()
+	if *bufferSize > 0 {
+		bufCap = *bufferSize
+	}
+	ringBuf := transport.NewRingBuffer(bufCap)
+	fsm := printer.NewFSM(prof, reg, head)
+
+	// 2. Headless Batch Mode: Process file and export PNG directly
+	if *inputFile != "" {
+		data, err := os.ReadFile(*inputFile)
+		if err != nil {
+			log.Fatalf("Failed to read input file %s: %v", *inputFile, err)
+		}
+		log.Printf("Executing %d bytes from %s in headless mode...", len(data), *inputFile)
+		for _, b := range data {
+			fsm.Step(b)
+		}
+
+		outPath := *outputPNG
+		if outPath == "" {
+			outPath = "receipt.png"
+		}
+		strip := head.GetPaperStrip()
+		if err := ui.SavePNG(outPath, strip, true); err != nil {
+			log.Fatalf("Failed to save output PNG to %s: %v", outPath, err)
+		}
+		log.Printf("Successfully rendered %d rows to %s", len(strip), outPath)
+		return
+	}
+
+	// 3. Interactive Daemon Mode
+	fmt.Println("================================================================")
+	fmt.Printf(" ThermalSim — QR203 Thermal Printer Digital Twin (Firmware %s)\n", fRev)
+	fmt.Println("================================================================")
+	fmt.Printf("• Print Resolution : 203 DPI (%d dots/line across 48mm)\n", prof.DotsPerLine())
+	fmt.Printf("• SRAM Buffer      : %d bytes (overrun drop tracking active)\n", bufCap)
+	fmt.Printf("• Real-Time Physics: %t\n", *realTime)
+
+	// Launch Web UI
+	if *httpAddr != "" {
+		webServer := ui.NewWebServer(*httpAddr, prof, head, reg, fsm, ringBuf)
+		if err := webServer.Start(); err != nil {
+			log.Printf("Warning: Failed to start Web UI on %s: %v", *httpAddr, err)
+		} else {
+			fmt.Printf("• Web Dashboard    : http://localhost%s\n", *httpAddr)
+		}
+	}
+
+	// Open Virtual Serial PTY
+	var pty *transport.PTYPort
+	if *ptyPath != "" {
+		var err error
+		pty, err = transport.OpenPTY(*ptyPath)
+		if err != nil {
+			log.Printf("Warning: Could not allocate PTY at %s: %v", *ptyPath, err)
+		} else {
+			defer pty.Close()
+			fmt.Printf("• Virtual Serial   : %s (Slave PTS: %s)\n", pty.DevicePath(), pty.SlavePath())
+			bridge := transport.NewBridge(pty, ringBuf, fsm)
+			bridge.Start()
+			defer bridge.Stop()
+		}
+	}
+
+	// Start Raw TCP Bridge
+	if *tcpAddr != "" {
+		tcpBridge, err := transport.NewTCPBridge(*tcpAddr)
+		if err != nil {
+			log.Printf("Warning: Failed to start TCP bridge on %s: %v", *tcpAddr, err)
+		} else {
+			defer tcpBridge.Close()
+			fmt.Printf("• Raw TCP Socket   : %s\n", tcpBridge.Addr())
+			go func() {
+				for {
+					conn, err := tcpBridge.AcceptConn()
+					if err != nil {
+						return
+					}
+					go func(c net.Conn) {
+						defer c.Close()
+						buf := make([]byte, 256)
+						for {
+							n, err := c.Read(buf)
+							if n > 0 {
+								for i := 0; i < n; i++ {
+									ringBuf.Push(buf[i])
+								}
+							}
+							if err != nil {
+								if err != io.EOF {
+									log.Printf("TCP connection error: %v", err)
+								}
+								return
+							}
+						}
+					}(conn)
+				}
+			}()
+		}
+	}
+
+	// Internal ring buffer drain loop if PTY bridge is not running
+	if pty == nil {
+		stopDrain := make(chan struct{})
+		defer close(stopDrain)
+		go func() {
+			for {
+				select {
+				case <-stopDrain:
+					return
+				default:
+					b, ok := ringBuf.Pop()
+					if ok {
+						fsm.Step(b)
+					} else {
+						time.Sleep(100 * time.Microsecond)
+					}
+				}
+			}
+		}()
+	}
+
+	fmt.Println("\nPrinter online and ready for serial stream. Press Ctrl+C to terminate.")
+
+	// Wait for interrupt signal
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	<-sigChan
+
+	fmt.Println("\nShutting down ThermalSim...")
+}

@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ThermalSim — QR203 Digital Twin</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="logo">
+      <span class="icon">🖨️</span>
+      <h1>ThermalSim <span class="tag">QR203 Digital Twin</span></h1>
+    </div>
+    <div class="header-badges">
+      <span id="badge-firmware" class="badge">v2.69</span>
+      <span id="badge-baud" class="badge">19200 bps</span>
+      <span id="badge-status" class="badge badge-online">ONLINE</span>
+    </div>
+  </header>
+
+  <main class="dashboard">
+    <!-- Paper Receipt Viewport Column -->
+    <section class="paper-section">
+      <div class="section-header">
+        <h2>Rolling Thermal Paper</h2>
+        <div class="paper-actions">
+          <button id="btn-zoom-1x" class="btn-sm active">1x</button>
+          <button id="btn-zoom-2x" class="btn-sm">2x</button>
+          <button id="btn-clear" class="btn-sm btn-warn">Tear / Clear</button>
+          <a id="btn-download" class="btn-sm btn-accent" href="/api/receipt.png" download="receipt.png">Save PNG</a>
+        </div>
+      </div>
+      <div class="paper-container" id="paper-scroll-box">
+        <div class="paper-tear-edge"></div>
+        <canvas id="paper-canvas" width="384" height="200"></canvas>
+      </div>
+    </section>
+
+    <!-- Virtual Hardware Switchboard & Faults Column -->
+    <section class="controls-section">
+      <!-- Front Panel & Hardware Buttons -->
+      <div class="card">
+        <h3>Front Panel & Mechanism Controls</h3>
+        <div class="panel-row">
+          <div class="led-container">
+            <div id="status-led" class="led led-on"></div>
+            <span id="led-label">LED: Normal (1 blink)</span>
+          </div>
+          <button id="btn-feed" class="btn-panel">FEED</button>
+          <button id="btn-power" class="btn-panel btn-power-on">POWER: ON</button>
+        </div>
+      </div>
+
+      <!-- Live Hardware Sensors & Fault Injection -->
+      <div class="card">
+        <h3>Hardware Sensors & Fault Injection</h3>
+        
+        <div class="control-group">
+          <label>Paper Sensor:</label>
+          <div class="radio-pill">
+            <label><input type="radio" name="paper-state" value="0" checked> Adequate</label>
+            <label><input type="radio" name="paper-state" value="1"> Near End</label>
+            <label><input type="radio" name="paper-state" value="2"> Paper Out</label>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <label>Platen / Cover:</label>
+          <button id="btn-platen" class="toggle-btn">Cover: Closed</button>
+        </div>
+
+        <div class="control-group">
+          <div class="slider-header">
+            <label>Thermal Head Temperature:</label>
+            <span id="val-temp">25.0 °C</span>
+          </div>
+          <input type="range" id="slider-temp" min="15" max="85" step="0.5" value="25">
+          <small class="hint">> 60°C triggers hardware overheat halt & 5-blink LED</small>
+        </div>
+
+        <div class="control-group">
+          <div class="slider-header">
+            <label>Power Supply Voltage:</label>
+            <span id="val-voltage">7.2 V</span>
+          </div>
+          <input type="range" id="slider-voltage" min="3.5" max="11.5" step="0.1" value="7.2">
+          <small class="hint">&lt; 4.5V triggers CPU brownout reset; > 9.5V sets fault bit</small>
+        </div>
+      </div>
+
+      <!-- SRAM Ring Buffer & UART Stats -->
+      <div class="card">
+        <h3>SRAM Receive Ring Buffer</h3>
+        <div class="meter-container">
+          <div class="meter-bar">
+            <div id="buffer-fill-bar" style="width: 0%;"></div>
+          </div>
+          <div class="meter-labels">
+            <span id="buffer-label">0 / 4096 bytes</span>
+            <span id="drops-label" class="warn-text">Dropped: 0 bytes</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Test & Quirk Demonstration Payloads -->
+      <div class="card">
+        <h3>Test Payloads & Hardware Quirk Demos</h3>
+        <div class="button-grid">
+          <button id="btn-sample-receipt" class="btn-demo">Sample Receipt</button>
+          <button id="btn-selftest" class="btn-demo">DC2 T Self-Test</button>
+          <button id="btn-quirk-lockup" class="btn-demo btn-demo-warn" title="Sends truncated bitmap; following text is swallowed as pixels">Quirk: Truncated Bitmap Lock</button>
+          <button id="btn-quirk-barcode" class="btn-demo btn-demo-warn" title="Sends barcode mid-line; dumps payload bytes as visible text">Quirk: Mid-Line Barcode Dump</button>
+          <button id="btn-quirk-overflow" class="btn-demo btn-demo-warn" title="Floods buffer with dense bitmaps without flow control">Quirk: Buffer Overflow Flood</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Real-Time Logic Analyzer / Stream Inspector Column -->
+    <section class="inspector-section">
+      <div class="card fill-height">
+        <h3>Byte Stream & FSM Inspector</h3>
+        <div class="fsm-status-box">
+          <span class="fsm-title">Current FSM State:</span>
+          <span id="fsm-state-badge" class="state-badge">STATE_NORMAL</span>
+        </div>
+        <div class="log-container" id="fsm-event-log">
+          <!-- Byte events stream in here -->
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

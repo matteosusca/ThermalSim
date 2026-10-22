@@ -58,7 +58,12 @@ func (b *Bridge) Start() {
 					}
 				}
 				if err != nil {
-					return
+					select {
+					case <-b.stopChan:
+						return
+					default:
+						time.Sleep(10 * time.Millisecond)
+					}
 				}
 			}
 		}
@@ -109,6 +114,9 @@ func (b *Bridge) Stop() {
 	}
 	b.running = false
 	close(b.stopChan)
+	if closer, ok := b.rw.(io.Closer); ok {
+		_ = closer.Close()
+	}
 	b.mu.Unlock()
 
 	b.wg.Wait()

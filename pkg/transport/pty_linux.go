@@ -16,9 +16,10 @@ const (
 
 // PTYPort represents a virtual serial port pair created via Linux /dev/ptmx.
 type PTYPort struct {
-	master     *os.File
-	slavePath  string
-	symlinkPath string
+	master         *os.File
+	slaveKeepAlive *os.File
+	slavePath      string
+	symlinkPath    string
 }
 
 // OpenPTY creates a new pseudo-terminal pair and optionally symlinks the slave to symlinkPath.
@@ -45,28 +46,30 @@ func OpenPTY(symlinkPath string) (*PTYPort, error) {
 
 	slavePath := fmt.Sprintf("/dev/pts/%d", ptyNum)
 
-	// 4. Configure slave PTS to raw mode
-	slaveFile, err := os.OpenFile(slavePath, os.O_RDWR|syscall.O_NOCTTY, 0)
+	// 4. Configure slave PTS to raw mode and keep handle open to prevent EIO on client disconnect
+	slaveKeepAlive, err := os.OpenFile(slavePath, os.O_RDWR|syscall.O_NOCTTY, 0)
 	if err == nil {
-		setRawTerminal(slaveFile.Fd())
-		slaveFile.Close()
+		setRawTerminal(slaveKeepAlive.Fd())
 	}
 
 	// 5. Create symlink if requested
 	if symlinkPath != "" {
-		// Clean up any existing stale symlink or file
 		_ = os.Remove(symlinkPath)
 		_ = os.MkdirAll(filepath.Dir(symlinkPath), 0755)
 		if err := os.Symlink(slavePath, symlinkPath); err != nil {
+			if slaveKeepAlive != nil {
+				slaveKeepAlive.Close()
+			}
 			master.Close()
 			return nil, fmt.Errorf("failed to create symlink %s -> %s: %w", symlinkPath, slavePath, err)
 		}
 	}
 
 	return &PTYPort{
-		master:      master,
-		slavePath:   slavePath,
-		symlinkPath: symlinkPath,
+		master:         master,
+		slaveKeepAlive: slaveKeepAlive,
+		slavePath:      slavePath,
+		symlinkPath:    symlinkPath,
 	}, nil
 }
 
@@ -93,8 +96,11 @@ func (p *PTYPort) Write(b []byte) (int, error) {
 	return p.master.Write(b)
 }
 
-// Close closes the PTY master and removes the symlink.
+// Close closes the PTY master, releases keep-alive, and removes the symlink.
 func (p *PTYPort) Close() error {
+	if p.slaveKeepAlive != nil {
+		p.slaveKeepAlive.Close()
+	}
 	if p.symlinkPath != "" {
 		_ = os.Remove(p.symlinkPath)
 	}
