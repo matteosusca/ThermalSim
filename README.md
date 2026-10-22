@@ -175,6 +175,8 @@ type Profile interface {
 ```
 To add an 80mm printer or a different thermal model (e.g. Epson TM-T88, Star Micronics), simply create a new package in `pkg/models/<model_name>` implementing `printer.Profile` with zero changes required in `pkg/transport` or `pkg/ui`.
 
+👉 **Read the step-by-step guide: [Implementing Support for New Thermal Printers](doc/06_adding_new_printers.md)**
+
 ---
 
 ## License & Intellectual Property
