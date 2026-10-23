@@ -142,22 +142,54 @@ type FSM struct {
 	// Event listener for UI logic analyzer
 	eventCallback func(FSMEvent)
 
-	// Sleep tracking
-	idleTimer *time.Timer
+	// Inactivity tracking for ESC 8 sleep mode
+	lastActivity time.Time
 }
 
 // NewFSM constructs the byte-driven state machine.
 func NewFSM(prof Profile, reg *Registers, head *ThermalHead) *FSM {
 	fsm := &FSM{
-		profile:  prof,
-		reg:      reg,
-		head:     head,
-		lineBuf:  NewLineBuffer(prof.DotsPerLine()),
-		state:    StateNormal,
-		paramBuf: make([]byte, 0, 16),
-		txOut:    make(chan byte, 512),
+		profile:      prof,
+		reg:          reg,
+		head:         head,
+		lineBuf:      NewLineBuffer(prof.DotsPerLine()),
+		state:        StateNormal,
+		paramBuf:     make([]byte, 0, 16),
+		txOut:        make(chan byte, 512),
+		lastActivity: time.Now(),
 	}
 	return fsm
+}
+
+// Reset resets the FSM state machine, buffers, and registers to power-on defaults.
+func (f *FSM) Reset() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.state = StateNormal
+	f.paramBuf = f.paramBuf[:0]
+	f.paramNeed = 0
+	f.paramCmd = 0
+	f.bitmapRemaining = 0
+	f.bitmapRowBytes = 0
+	f.bitmapRowReceived = 0
+	f.lineBuf.Reset()
+	f.lastActivity = time.Now()
+	f.reg.Reset(f.profile)
+}
+
+// CheckSleep evaluates the idle timeout and transitions to sleep if timeout has elapsed.
+func (f *FSM) CheckSleep(now time.Time) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.reg.SleepTimeoutSec > 0 && !f.reg.Sleeping {
+		if now.Sub(f.lastActivity) >= time.Duration(f.reg.SleepTimeoutSec)*time.Second {
+			f.reg.Sleeping = true
+			return true
+		}
+	}
+	return false
 }
 
 // SetEventCallback registers a callback to trace every processed byte.
@@ -204,6 +236,8 @@ func (f *FSM) Step(b byte) {
 		f.emit(b, "DROPPED (Within 50ms post-wake stabilization window)")
 		return
 	}
+
+	f.lastActivity = time.Now()
 
 	// 2. State Machine Dispatch
 	switch f.state {
@@ -304,7 +338,18 @@ func (f *FSM) Step(b byte) {
 		c1 := f.paramCmd
 		c2 := b
 		glyph := f.profile.RenderKanji(c1, c2)
+
+		renderW := 24 * f.reg.WidthMultiplier
+		if f.reg.DoubleWidth || f.reg.KanjiDoubleW {
+			renderW *= 2
+		}
+		leftBase := f.reg.LeftMargin + f.reg.LeftBlankChars*12
+		if leftBase+f.lineBuf.cursorX+renderW > f.profile.DotsPerLine() {
+			f.flushLineBuffer()
+		}
+
 		f.renderGlyphIntoLine(glyph, 24, 24)
+		f.lineBuf.cursorCol += 2
 		f.state = StateNormal
 		f.emit(b, "KANJI 2nd Byte")
 	}
@@ -893,10 +938,11 @@ func (f *FSM) handleTabStops(b byte) {
 
 func (f *FSM) startDC2StarBitmap() {
 	r := int(f.paramBuf[0]) // Rows high
-	n := int(f.paramBuf[1]) // Bytes wide (1..48)
-	if n > 48 {
-		n = 48
+	n := int(f.paramBuf[1]) // Bytes wide declared by host
+	if n <= 0 {
+		n = 1
 	}
+	// Consume exact declared byte count k = r * n from the UART
 	f.bitmapRemaining = r * n
 	f.bitmapRowBytes = n
 	f.bitmapRowReceived = 0
@@ -922,9 +968,10 @@ func (f *FSM) startGSv0Bitmap() {
 	// p[0] = '0', p[1] = m, p[2..3] = xL, xH, p[4..5] = yL, yH
 	widthBytes := int(p[2]) + int(p[3])*256
 	heightDots := int(p[4]) + int(p[5])*256
-	if widthBytes > 48 {
-		widthBytes = 48
+	if widthBytes <= 0 {
+		widthBytes = 1
 	}
+	// Consume exact declared byte count k = widthBytes * heightDots (CSN-A2 Manual v4.0 p.34)
 	f.bitmapRemaining = widthBytes * heightDots
 	f.bitmapRowBytes = widthBytes
 	f.bitmapRowReceived = 0
@@ -1392,12 +1439,18 @@ func (f *FSM) renderGlyphIntoLine(glyph []uint8, srcW, srcH int) {
 	if wMult < 1 {
 		wMult = 1
 	}
+	if f.reg.DoubleWidth || (srcW == 24 && f.reg.KanjiDoubleW) {
+		wMult *= 2
+	}
 	if f.reg.SingleLineDoubleW && wMult < 2 {
 		wMult = 2
 	}
 	hMult := f.reg.HeightMultiplier
 	if hMult < 1 {
 		hMult = 1
+	}
+	if f.reg.DoubleHeight || (srcW == 24 && f.reg.KanjiDoubleH) {
+		hMult *= 2
 	}
 
 	destW := srcW * wMult
@@ -1411,6 +1464,7 @@ func (f *FSM) renderGlyphIntoLine(glyph []uint8, srcW, srcH int) {
 	}
 
 	startX := f.lineBuf.cursorX + f.reg.LeftMargin + f.reg.LeftBlankChars*12
+	hasUnderline := (f.reg.Underline > 0) || (srcW == 24 && f.reg.KanjiUnderline)
 	for dy := 0; dy < destH; dy++ {
 		sy := dy / hMult
 		for dx := 0; dx < destW; dx++ {
@@ -1428,7 +1482,7 @@ func (f *FSM) renderGlyphIntoLine(glyph []uint8, srcW, srcH int) {
 			}
 
 			// Apply underline (disabled on 90-deg rotated or white/black inverted per 203 User Manual p.21 & p.45)
-			if f.reg.Underline > 0 && !f.reg.Rotate90 && !f.reg.Inverse && dy >= destH-f.reg.Underline {
+			if hasUnderline && !f.reg.Rotate90 && !f.reg.Inverse && dy >= destH-1 {
 				dot = 1
 			}
 
@@ -1448,15 +1502,34 @@ func (f *FSM) renderGlyphIntoLine(glyph []uint8, srcW, srcH int) {
 
 			posX := startX + dx
 			if posX < 384 {
-				f.lineBuf.matrix[dy][posX] = dot
-				if dot > 0 {
+				// Additive dot compositing: irreversible thermal paper burn
+				if f.reg.Inverse {
+					f.lineBuf.matrix[dy][posX] = dot
+				} else if dot > 0 {
+					f.lineBuf.matrix[dy][posX] = 1
+				}
+				if dot > 0 || f.reg.Inverse {
 					f.lineBuf.hasContent = true
 				}
 			}
 		}
 	}
 
-	f.lineBuf.cursorX += destW + f.reg.RightSideSpacing*wMult
+	spacing := f.reg.RightSideSpacing * wMult
+	// When white/black reverse printing mode is on, it also applies to character spacing (CSN-A2 Manual p. 21)
+	if f.reg.Inverse && spacing > 0 {
+		for dy := 0; dy < destH; dy++ {
+			for sx := 0; sx < spacing; sx++ {
+				posX := startX + destW + sx
+				if posX < 384 {
+					f.lineBuf.matrix[dy][posX] = 1
+					f.lineBuf.hasContent = true
+				}
+			}
+		}
+	}
+
+	f.lineBuf.cursorX += destW + spacing
 }
 
 func (f *FSM) flushLineBuffer() int {

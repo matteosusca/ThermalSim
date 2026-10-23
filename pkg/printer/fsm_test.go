@@ -2,6 +2,7 @@ package printer
 
 import (
 	"testing"
+	"time"
 )
 
 type mockProfile struct{}
@@ -286,5 +287,232 @@ func TestFSMGoojprtQR203CommandsAndQuirks(t *testing.T) {
 	fsm.Step(0x82) // Bit 7 (Underline) + Bit 1 (Inverse)
 	if !reg.Inverse || reg.Underline != 1 {
 		t.Fatalf("expected Inverse=true and Underline=1, got Inverse=%v Underline=%d", reg.Inverse, reg.Underline)
+	}
+}
+
+func TestFSMBitmapDeclaredWidths(t *testing.T) {
+	prof := &mockProfile{}
+	reg := NewRegisters(prof)
+	head := NewThermalHead(384)
+	fsm := NewFSM(prof, reg, head)
+
+	// Stream GS v 0 0 xL xH yL yH [data...]
+	// Declared width = 64 bytes (512 dots > 384 dots). xL = 64, xH = 0.
+	// Declared height = 2 rows. yL = 2, yH = 0.
+	// Total payload must be exactly 64 * 2 = 128 bytes.
+	fsm.Step(0x1D) // GS
+	fsm.Step('v')  // 'v'
+	fsm.Step('0')  // '0'
+	fsm.Step(0)    // m = 0 (Normal)
+	fsm.Step(64)   // xL = 64
+	fsm.Step(0)    // xH = 0
+	fsm.Step(2)    // yL = 2
+	fsm.Step(0)    // yH = 0
+
+	if fsm.state != StateRawBitmap {
+		t.Fatalf("expected StateRawBitmap, got %v", fsm.state)
+	}
+	if fsm.bitmapRemaining != 128 {
+		t.Fatalf("expected bitmapRemaining == 128 bytes, got %d", fsm.bitmapRemaining)
+	}
+
+	// Stream 128 bytes
+	for i := 0; i < 128; i++ {
+		fsm.Step(0xAA)
+	}
+
+	// State machine must return to StateNormal after exactly 128 bytes!
+	if fsm.state != StateNormal {
+		t.Fatalf("expected FSM to return to StateNormal after consuming all 128 bytes, got %v", fsm.state)
+	}
+
+	// Now send normal text 'A' followed by LF
+	fsm.Step('A')
+	if fsm.lineBuf.cursorCol != 1 {
+		t.Fatalf("expected normal character tracking after bitmap, cursorCol=%d", fsm.lineBuf.cursorCol)
+	}
+}
+
+func TestFSMAdditiveCompositing(t *testing.T) {
+	prof := &mockProfile{}
+	reg := NewRegisters(prof)
+	head := NewThermalHead(384)
+	fsm := NewFSM(prof, reg, head)
+
+	// Render 'A' into line buffer
+	fsm.Step('A')
+	// Check that lineBuf has dots
+	hasDot := false
+	for y := 0; y < 24; y++ {
+		if fsm.lineBuf.matrix[y][0] > 0 {
+			hasDot = true
+			break
+		}
+	}
+	if !hasDot {
+		t.Fatal("expected dot at posX=0 for 'A' with mockProfile")
+	}
+
+	// Move cursor back to 0 using ESC $ 0 0 (Absolute horizontal position)
+	fsm.Step(0x1B)
+	fsm.Step('$')
+	fsm.Step(0)
+	fsm.Step(0)
+
+	if fsm.lineBuf.cursorX != 0 {
+		t.Fatalf("expected cursorX=0 after ESC $ 0 0, got %d", fsm.lineBuf.cursorX)
+	}
+
+	// Render another glyph or line
+	fsm.Step('A')
+
+	// Dot at [0][0] must still be preserved (OR composited, never erased by white)
+	if fsm.lineBuf.matrix[0][0] != 1 {
+		t.Fatalf("expected dot at [0][0] preserved by additive burn, got %d", fsm.lineBuf.matrix[0][0])
+	}
+}
+
+func TestFSMInverseInterCharacterSpacing(t *testing.T) {
+	prof := &mockProfile{}
+	reg := NewRegisters(prof)
+	head := NewThermalHead(384)
+	fsm := NewFSM(prof, reg, head)
+
+	// Enable Inverse mode (GS B 1) and set right-side character spacing (ESC SP 3)
+	fsm.Step(0x1D)
+	fsm.Step('B')
+	fsm.Step(1) // Inverse on
+
+	fsm.Step(0x1B)
+	fsm.Step(' ')
+	fsm.Step(3) // 3 dots inter-character spacing
+
+	if !reg.Inverse || reg.RightSideSpacing != 3 {
+		t.Fatalf("expected Inverse=true, RightSideSpacing=3")
+	}
+
+	// Render 'A'
+	fsm.Step('A')
+
+	// Glyph width is 12 dots. Dots 12, 13, 14 are the spacing dots.
+	// In Inverse mode, inter-character spacing dots MUST be filled with 1 (black) per CSN-A2 Manual p. 21!
+	for y := 0; y < 24; y++ {
+		for s := 12; s < 15; s++ {
+			if fsm.lineBuf.matrix[y][s] != 1 {
+				t.Fatalf("expected spacing dot [%d][%d] to be 1 (black) in inverse mode, got %d", y, s, fsm.lineBuf.matrix[y][s])
+			}
+		}
+	}
+}
+
+func TestFSMSleepWake(t *testing.T) {
+	prof := &mockProfile{}
+	reg := NewRegisters(prof)
+	head := NewThermalHead(384)
+	fsm := NewFSM(prof, reg, head)
+
+	// Configure sleep: ESC 8 1 0 (1 second timeout)
+	fsm.Step(0x1B)
+	fsm.Step('8')
+	fsm.Step(1)
+	fsm.Step(0)
+
+	if reg.SleepTimeoutSec != 1 {
+		t.Fatalf("expected SleepTimeoutSec == 1, got %d", reg.SleepTimeoutSec)
+	}
+
+	// Advance time past timeout
+	future := time.Now().Add(2 * time.Second)
+	woke := fsm.CheckSleep(future)
+	if !woke || !reg.Sleeping {
+		t.Fatal("expected printer to transition to sleeping state")
+	}
+
+	// In sleeping state, arbitrary characters must be dropped
+	fsm.Step('Z')
+	if fsm.lineBuf.hasContent {
+		t.Fatal("character must be ignored while sleeping")
+	}
+
+	// Send wake byte 0xFF
+	fsm.Step(0xFF)
+	if reg.Sleeping {
+		t.Fatal("printer must wake up on 0xFF")
+	}
+
+	// Characters within 50ms post-wake stabilization window are dropped
+	fsm.Step('A')
+	if fsm.lineBuf.hasContent {
+		t.Fatal("character within 50ms stabilization window must be dropped")
+	}
+
+	// After 50ms, printer resumes normal processing
+	reg.WakeTime = time.Now().Add(-60 * time.Millisecond)
+	fsm.Step('B')
+	if !fsm.lineBuf.hasContent {
+		t.Fatal("character after stabilization window must be processed")
+	}
+}
+
+func TestFSMKanjiWrapAndCursor(t *testing.T) {
+	prof := &mockProfile{}
+	reg := NewRegisters(prof)
+	head := NewThermalHead(384)
+	fsm := NewFSM(prof, reg, head)
+
+	// Enable Kanji mode: FS &
+	fsm.Step(0x1C)
+	fsm.Step('&')
+	if !reg.KanjiMode {
+		t.Fatal("expected KanjiMode == true")
+	}
+
+	// Print a character first so lineBuf has content
+	fsm.Step('A')
+
+	// Move cursor near right edge (e.g. 370 dots)
+	fsm.lineBuf.cursorX = 370
+
+	// Send Kanji character (2 bytes: 0x81, 0x40)
+	fsm.Step(0x81)
+	fsm.Step(0x40)
+
+	// A Kanji character is 24 dots wide. 370 + 24 = 394 > 384!
+	// It should have auto-wrapped (flushed previous line and rendered on new line)
+	if head.TotalRows() == 0 {
+		t.Fatal("expected line flush upon Kanji auto-wrap beyond 384 dots")
+	}
+	if fsm.lineBuf.cursorCol != 2 {
+		t.Fatalf("expected cursorCol == 2 for Kanji, got %d", fsm.lineBuf.cursorCol)
+	}
+}
+
+func TestBrownoutReset(t *testing.T) {
+	prof := &mockProfile{}
+	reg := NewRegisters(prof)
+	head := NewThermalHead(384)
+	head.SetProfile(prof)
+	fsm := NewFSM(prof, reg, head)
+	head.SetResetCallback(func() { fsm.Reset() })
+
+	// Dirty FSM state and change registers
+	fsm.Step('X')
+	reg.Underline = 2
+	reg.Inverse = true
+
+	// Simulate heavy load causing brownout: 300 active dots and supply voltage = 4.0V
+	reg.SupplyVoltage = 4.0
+	row := make([]uint8, 384)
+	for i := 0; i < 200; i++ {
+		row[i] = 1
+	}
+	head.BurnRow(row, reg)
+
+	// Verify FSM and registers reset to defaults
+	if reg.Underline != 0 || reg.Inverse != false {
+		t.Fatalf("expected registers reset after brownout: Underline=%d, Inverse=%v", reg.Underline, reg.Inverse)
+	}
+	if fsm.lineBuf.hasContent {
+		t.Fatal("expected lineBuf cleared after brownout reset")
 	}
 }

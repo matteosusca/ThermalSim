@@ -40,6 +40,10 @@ type ThermalHead struct {
 
 	// Listeners for UI & event streaming
 	listeners []ThermalHeadListener
+
+	// Active profile and reset callback for brownout reboot
+	profile       Profile
+	resetCallback func()
 }
 
 // NewThermalHead constructs a new ThermalHead.
@@ -61,6 +65,20 @@ func (th *ThermalHead) AddListener(l ThermalHeadListener) {
 	th.mu.Lock()
 	defer th.mu.Unlock()
 	th.listeners = append(th.listeners, l)
+}
+
+// SetProfile associates the active printer profile with the thermal head.
+func (th *ThermalHead) SetProfile(prof Profile) {
+	th.mu.Lock()
+	defer th.mu.Unlock()
+	th.profile = prof
+}
+
+// SetResetCallback configures a callback invoked on MCU brownout reset.
+func (th *ThermalHead) SetResetCallback(cb func()) {
+	th.mu.Lock()
+	defer th.mu.Unlock()
+	th.resetCallback = cb
 }
 
 // SetRealTimePhysics toggles real-time microsecond sleep pauses.
@@ -158,8 +176,11 @@ func (th *ThermalHead) BurnRow(rawBits []uint8, reg *Registers) (time.Duration, 
 	// Brownout reset check: if effective voltage drops < 4.5V, CPU resets!
 	if effectiveVoltage < 4.5 && activeDots > 120 {
 		th.mu.Unlock()
-		// Trigger CPU brownout reset
-		reg.Reset(&dummyProfile{})
+		if th.resetCallback != nil {
+			th.resetCallback()
+		} else if th.profile != nil {
+			reg.Reset(th.profile)
+		}
 		return burnDuration, false
 	}
 
@@ -249,35 +270,6 @@ func (th *ThermalHead) CurrentLEDState(reg *Registers) int {
 	}
 	return 1 // 1 blink: Normal operation
 }
-
-// Dummy profile for brownout reset
-type dummyProfile struct{}
-
-func (d *dummyProfile) Name() string                   { return "QR203" }
-func (d *dummyProfile) FirmwareVersion() FirmwareRevision { return FirmwareV269 }
-func (d *dummyProfile) DotsPerLine() int              { return 384 }
-func (d *dummyProfile) BytesPerLine() int             { return 48 }
-func (d *dummyProfile) DefaultBaudRate() int          { return 19200 }
-func (d *dummyProfile) ReceiveBufferSize() int        { return 4096 }
-func (d *dummyProfile) DefaultLineSpacing() uint8     { return 30 }
-func (d *dummyProfile) MaxHeatingDots() uint8         { return 7 }
-func (d *dummyProfile) DefaultHeatingTime() uint8     { return 80 }
-func (d *dummyProfile) DefaultHeatingInterval() uint8 { return 2 }
-func (d *dummyProfile) RenderChar(code byte, font FontType, codePage int, intlSet int) []byte {
-	return nil
-}
-func (d *dummyProfile) RenderKanji(c1, c2 byte) []byte { return nil }
-func (d *dummyProfile) GenerateBarcode(m int, data []byte, reg *Registers) *BarcodeResult {
-	return nil
-}
-func (d *dummyProfile) ProcessQRCommand(fn byte, payload []byte, reg *Registers) [][]uint8 {
-	return nil
-}
-func (d *dummyProfile) GenerateSelfTestPage(reg *Registers) [][]uint8 {
-	return nil
-}
-func (d *dummyProfile) SupportsQRCode() bool           { return true }
-func (d *dummyProfile) SupportsBarcode(system int) bool { return true }
 
 func min(a, b int) int {
 	if a < b {

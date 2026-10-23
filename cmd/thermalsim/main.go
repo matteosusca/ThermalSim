@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"thermalsim/pkg/models/qr203"
 	"thermalsim/pkg/printer"
@@ -39,6 +38,7 @@ func main() {
 	prof := qr203.NewQR203Profile(fRev)
 	reg := printer.NewRegisters(prof)
 	head := printer.NewThermalHead(prof.DotsPerLine())
+	head.SetProfile(prof)
 	head.SetRealTimePhysics(*realTime)
 
 	bufCap := prof.ReceiveBufferSize()
@@ -47,6 +47,7 @@ func main() {
 	}
 	ringBuf := transport.NewRingBuffer(bufCap)
 	fsm := printer.NewFSM(prof, reg, head)
+	head.SetResetCallback(func() { fsm.Reset() })
 
 	// 2. Headless Batch Mode: Process file and export PNG directly
 	if *inputFile != "" {
@@ -89,7 +90,7 @@ func main() {
 		}
 	}
 
-	// Open Virtual Serial PTY
+	// Open Virtual Serial PTY (if requested & supported)
 	var pty *transport.PTYPort
 	if *ptyPath != "" {
 		var err error
@@ -103,11 +104,14 @@ func main() {
 		} else {
 			defer pty.Close()
 			fmt.Printf("• Virtual Serial   : %s (Slave PTS: %s)\n", pty.DevicePath(), pty.SlavePath())
-			bridge := transport.NewBridge(pty, ringBuf, fsm)
-			bridge.Start()
-			defer bridge.Stop()
 		}
 	}
+
+	// Initialize and launch unified Transport Bridge (PTY, MCU parser loop, TX routing)
+	bridge := transport.NewBridge(pty, ringBuf, fsm)
+	bridge.SetRealTime(*realTime, prof.DefaultBaudRate())
+	bridge.Start()
+	defer bridge.Stop()
 
 	// Start Raw TCP Bridge
 	if *tcpAddr != "" {
@@ -123,18 +127,20 @@ func main() {
 					if err != nil {
 						return
 					}
+					bridge.AttachWriter(conn)
 					go func(c net.Conn) {
-						defer c.Close()
+						defer func() {
+							bridge.DetachWriter(c)
+							c.Close()
+						}()
 						buf := make([]byte, 256)
 						for {
 							n, err := c.Read(buf)
 							if n > 0 {
-								for i := 0; i < n; i++ {
-									ringBuf.Push(buf[i])
-								}
+								bridge.PushBytes(buf[:n])
 							}
 							if err != nil {
-								if err != io.EOF {
+								if err != io.EOF && !errors.Is(err, net.ErrClosed) {
 									log.Printf("TCP connection error: %v", err)
 								}
 								return
@@ -144,27 +150,6 @@ func main() {
 				}
 			}()
 		}
-	}
-
-	// Internal ring buffer drain loop if PTY bridge is not running
-	if pty == nil {
-		stopDrain := make(chan struct{})
-		defer close(stopDrain)
-		go func() {
-			for {
-				select {
-				case <-stopDrain:
-					return
-				default:
-					b, ok := ringBuf.Pop()
-					if ok {
-						fsm.Step(b)
-					} else {
-						time.Sleep(100 * time.Microsecond)
-					}
-				}
-			}
-		}()
 	}
 
 	fmt.Println("\nPrinter online and ready for serial stream. Press Ctrl+C to terminate.")
