@@ -5,7 +5,7 @@
 [![Go Version](https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go)](https://golang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform Support](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)](#cross-platform-compatibility)
-[![Tests](https://img.shields.io/badge/Tests-Passing%20(-race)-brightgreen)](pkg/)
+[![CI](https://github.com/matteosusca/ThermalSim/actions/workflows/ci.yml/badge.svg)](https://github.com/matteosusca/ThermalSim/actions/workflows/ci.yml)
 
 **ThermalSim** is an embedded hardware simulator designed as a drop-in replacement for physical ESC/POS thermal printers during development, CI/CD testing, and host software debugging.
 
